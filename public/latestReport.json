@@ -1,0 +1,51 @@
+{
+  "ok": true,
+  "source": "CROO Live Provider",
+  "project": "CROO SentinelX",
+  "service": "Pre-trade Safety Clearance",
+  "orderId": "1001",
+  "status": "completed",
+  "amount": "0.10 USDC",
+  "decision": "CLEARANCE_GRANTED",
+  "clearance": "CLEARANCE_GRANTED",
+  "riskScore": 24,
+  "safetyScore": 76,
+  "riskLevel": "SAFE",
+  "pair": "BNB/USDT",
+  "chain": "BSC",
+  "proofHash": "demo-proof-1782562884685",
+  "reportURI": "sentinelx://order/1001/proof/demo-proof-1782562884685",
+  "txHash": "",
+  "requesterAgentId": "AlphaSwap Requester",
+  "providerAgentId": "CROO SentinelX",
+  "lifecycle": [
+    "LOCK",
+    "DELIVER",
+    "CLEAR"
+  ],
+  "raw": {
+    "orderId": "1001",
+    "service": "Pre-trade Safety Clearance",
+    "status": "completed",
+    "amount": "0.10 USDC",
+    "clearance": "CLEARANCE_GRANTED",
+    "decision": "CLEARANCE_GRANTED",
+    "riskScore": 24,
+    "safetyScore": 76,
+    "riskLevel": "SAFE",
+    "pair": "BNB/USDT",
+    "chain": "BSC",
+    "proofHash": "demo-proof-1782562884685",
+    "txHash": "",
+    "requesterAgentId": "AlphaSwap Requester",
+    "providerAgentId": "CROO SentinelX",
+    "lifecycle": [
+      "LOCK",
+      "DELIVER",
+      "CLEAR"
+    ],
+    "createdAtUTC": "2026-06-27T12:21:24.686Z"
+  },
+  "createdAtUTC": "2026-06-27T12:21:24.686Z",
+  "syncedAtUTC": "2026-06-27T12:21:24.686Z"
+}

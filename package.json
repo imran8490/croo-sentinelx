@@ -1,0 +1,34 @@
+{
+  "name": "croo-sentinelx",
+  "version": "1.0.0",
+  "description": "CROO SentinelX - A2A pre-swap safety clearance agent",
+  "main": "server.js",
+  "scripts": {
+    "start": "NODE_OPTIONS=--dns-result-order=ipv4first node server.js",
+    "provider": "NODE_OPTIONS=--dns-result-order=ipv4first node provider.js",
+    "requester": "NODE_OPTIONS=--dns-result-order=ipv4first node requester.js",
+    "orchestrator": "node orderOrchestrator.js",
+    "dev": "NODE_OPTIONS=--dns-result-order=ipv4first node server.js"
+  },
+  "keywords": [
+    "croo",
+    "sentinelx",
+    "a2a",
+    "ai-agent",
+    "defi",
+    "risk-engine",
+    "pre-swap",
+    "web3"
+  ],
+  "author": "Imran",
+  "license": "MIT",
+  "dependencies": {
+    "@croo-network/sdk": "^0.2.1",
+    "axios": "^1.7.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.0",
+    "express": "^4.19.2",
+    "uuid": "^10.0.0"
+  }
+}
