@@ -8,17 +8,49 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function buildRequirementsText({ walletAddress, token, chain, comment, tokenContract }) {
+function buildRequirementsText({
+  walletAddress,
+  recipientAddress,
+  destinationAddress,
+  token,
+  chain,
+  comment,
+  tokenContract,
+  outputToken,
+  amountUsdc,
+}) {
+  const receiver = String(recipientAddress || destinationAddress || walletAddress || "").trim();
+  const inputToken = String(token || "USDC").toUpperCase();
+  const outToken = String(outputToken || (inputToken === "USDC" && String(chain).toUpperCase() === "BASE" ? "WETH" : "USDT")).toUpperCase();
+  const amount = String(amountUsdc || process.env.DEFAULT_SWAP_USDC_AMOUNT || "0.05").trim();
+  const action =
+    comment ||
+    `AlphaSwap wants to swap ${inputToken} to ${outToken}. SentinelX must return CLEARANCE_GRANTED before AlphaSwap executes the real swap.`;
+
   return JSON.stringify({
+    requesterAgent: "AlphaSwap",
+    providerAgent: "CROO SentinelX",
     walletAddress,
-    token,
+    sourceWalletAddress: walletAddress,
+    destinationAddress: receiver,
+    recipientAddress: receiver,
+    inputToken,
+    outputToken: outToken,
+    token: inputToken,
     chain,
     tokenContract: tokenContract || "",
-    action: comment || `Pre-swap safety check for ${token} to USDT on ${chain}`,
-    text: `Wallet: ${walletAddress} Token: ${token} Chain: ${chain} TokenContract: ${tokenContract || "native"} Action: ${comment || `Pre-swap safety check for ${token} to USDT on ${chain}`}`
+    amountUsdc: amount,
+    swapPair: `${inputToken}/${outToken}`,
+    swapRoute: `${inputToken} -> ${outToken}`,
+    action,
+    executionRule:
+      "Do not execute swap until SentinelX report is delivered and result is declared CLEARANCE_GRANTED. Send the swap output only to destinationAddress.",
+    text:
+      `Wallet: ${walletAddress} SourceWallet: ${walletAddress} DestinationWallet: ${receiver} ` +
+      `RecipientAddress: ${receiver} AmountUSDC: ${amount} Token: ${inputToken} OutputToken: ${outToken} ` +
+      `Chain: ${chain} TokenContract: ${tokenContract || "native"} SwapRoute: ${inputToken}->${outToken} Action: ${action}`,
   });
 }
-
 
 function isValidWallet(addr) {
   return typeof addr === "string" && /^0x[a-fA-F0-9]{40}$/.test(addr.trim());
@@ -28,30 +60,27 @@ function curlJson(method, url, body, sdkKey) {
   return new Promise((resolve, reject) => {
     const args = [
       "-sS",
-      "-X", method,
-      "-H", `x-sdk-key: ${sdkKey}`,
-      "-H", `X-SDK-Key: ${sdkKey}`,
-      "-H", "Content-Type: application/json",
+      "-X",
+      method,
+      "-H",
+      `x-sdk-key: ${sdkKey}`,
+      "-H",
+      `X-SDK-Key: ${sdkKey}`,
+      "-H",
+      "Content-Type: application/json",
     ];
 
-    if (body) {
-      args.push("-d", JSON.stringify(body));
-    }
-
+    if (body) args.push("-d", JSON.stringify(body));
     args.push(url);
 
     execFile("curl", args, { timeout: 90000 }, (error, stdout, stderr) => {
-      if (error) {
-        return reject(new Error(stderr || error.message));
-      }
+      if (error) return reject(new Error(stderr || error.message));
 
       try {
         const data = JSON.parse(stdout || "{}");
-
         if (data && Number(data.code) >= 400) {
           return reject(new Error(data.message || data.reason || JSON.stringify(data)));
         }
-
         resolve(data);
       } catch {
         reject(new Error(stdout || "curl returned invalid JSON"));
@@ -110,12 +139,7 @@ async function getOrderStatus(client, config, orderId, sdkKey) {
   try {
     return await client.getOrder(orderId);
   } catch {
-    return await curlJson(
-      "GET",
-      `${config.baseURL}/backend/v1/orders/${orderId}`,
-      null,
-      sdkKey
-    );
+    return await curlJson("GET", `${config.baseURL}/backend/v1/orders/${orderId}`, null, sdkKey);
   }
 }
 
@@ -124,13 +148,7 @@ async function payOrder(client, config, orderId, sdkKey) {
     return await client.payOrder(orderId);
   } catch (err) {
     console.log("⚠️ SDK payOrder failed, trying curl raw API:", err.message || err);
-
-    return await curlJson(
-      "POST",
-      `${config.baseURL}/backend/v1/orders/${orderId}/pay`,
-      {},
-      sdkKey
-    );
+    return await curlJson("POST", `${config.baseURL}/backend/v1/orders/${orderId}/pay`, {}, sdkKey);
   }
 }
 
@@ -138,16 +156,24 @@ async function getDelivery(client, config, orderId, sdkKey) {
   try {
     return await client.getDelivery(orderId);
   } catch {
-    return await curlJson(
-      "GET",
-      `${config.baseURL}/backend/v1/orders/${orderId}/delivery`,
-      null,
-      sdkKey
-    );
+    return await curlJson("GET", `${config.baseURL}/backend/v1/orders/${orderId}/delivery`, null, sdkKey);
   }
 }
 
-async function runAlphaSwapOrder({ walletAddress, token, chain, comment }, onUpdate = () => {}) {
+async function runAlphaSwapOrder(
+  {
+    walletAddress,
+    recipientAddress = "",
+    destinationAddress = "",
+    token = "BNB",
+    chain = "BSC",
+    comment = "",
+    tokenContract = "",
+    outputToken = "",
+    amountUsdc = "",
+  },
+  onUpdate = () => {}
+) {
   const sdkKey = String(process.env.ALPHASWAP_SDK_KEY || "").trim();
   const targetServiceId = String(process.env.CROO_TARGET_SERVICE_ID || "").trim();
 
@@ -163,8 +189,24 @@ async function runAlphaSwapOrder({ walletAddress, token, chain, comment }, onUpd
   const { AgentClient } = sdk;
   const client = new AgentClient(config, sdkKey);
 
-  const requirementsText = buildRequirementsText({ walletAddress, token, chain, comment });
-  onUpdate("requesting", { requirements: requirementsText, startedAtUTC: nowUTC() });
+  const requirementsText = buildRequirementsText({
+    walletAddress,
+    recipientAddress,
+    destinationAddress,
+    token,
+    chain,
+    comment,
+    tokenContract,
+    outputToken,
+    amountUsdc,
+  });
+
+  onUpdate("requesting", {
+    requester: "AlphaSwap Requester",
+    provider: "CROO SentinelX",
+    requirements: requirementsText,
+    startedAtUTC: nowUTC(),
+  });
 
   let negotiation;
 
@@ -175,30 +217,25 @@ async function runAlphaSwapOrder({ walletAddress, token, chain, comment }, onUpd
     });
   } catch (err) {
     console.log("⚠️ SDK negotiate failed, trying curl raw API:", err.message || err);
-
     negotiation = await curlJson(
       "POST",
       `${config.baseURL}/backend/v1/orders/negotiate`,
       {
         serviceId: targetServiceId,
-       
         requirements: requirementsText,
-       
-  },
+      },
       sdkKey
     );
   }
 
   const negotiationId = extractNegotiationId(negotiation);
-  if (!negotiationId) {
-    throw new Error("No negotiationId returned from negotiate order");
-  }
+  if (!negotiationId) throw new Error("No negotiationId returned from negotiate order");
 
   onUpdate("negotiated", { negotiationId, negotiation });
 
   let orderId = extractOrderId(negotiation);
   const acceptStart = Date.now();
-  const maxAcceptWaitMs = 180000;
+  const maxAcceptWaitMs = Number(process.env.CROO_ACCEPT_TIMEOUT_MS || 180000);
 
   while (!orderId && Date.now() - acceptStart < maxAcceptWaitMs) {
     const status = await getNegotiationStatus(client, config, negotiationId, sdkKey);
@@ -218,16 +255,16 @@ async function runAlphaSwapOrder({ walletAddress, token, chain, comment }, onUpd
     await sleep(3000);
   }
 
-  if (!orderId) {
-    throw new Error("Timed out waiting for SentinelX to accept negotiation");
-  }
+  if (!orderId) throw new Error("Timed out waiting for SentinelX to accept negotiation");
 
-  onUpdate("accepted", { orderId });
+  onUpdate("accepted", {
+    orderId,
+    message: "SentinelX accepted AlphaSwap mission through CROO.",
+  });
 
-  // ---- Step 3: Wait until CROO order becomes CREATED, then pay ----------
   let readyOrder = null;
   const createdStart = Date.now();
-  const maxCreatedWaitMs = 180000;
+  const maxCreatedWaitMs = Number(process.env.CROO_CREATED_TIMEOUT_MS || 180000);
 
   while (Date.now() - createdStart < maxCreatedWaitMs) {
     const orderStatus = await getOrderStatus(client, config, orderId, sdkKey);
@@ -239,12 +276,8 @@ async function runAlphaSwapOrder({ walletAddress, token, chain, comment }, onUpd
       raw: orderStatus,
     });
 
-    if (statusText === "created" || statusText.includes("created")) {
-      readyOrder = orderStatus;
-      break;
-    }
-
     if (
+      statusText.includes("created") ||
       statusText.includes("paid") ||
       statusText.includes("delivering") ||
       statusText.includes("completed")
@@ -264,9 +297,7 @@ async function runAlphaSwapOrder({ walletAddress, token, chain, comment }, onUpd
     await sleep(3000);
   }
 
-  if (!readyOrder) {
-    throw new Error("Timed out waiting for CROO order status to become created");
-  }
+  if (!readyOrder) throw new Error("Timed out waiting for CROO order status to become created");
 
   let paid;
   const readyStatus = String(readyOrder?.status || "").toLowerCase();
@@ -281,11 +312,15 @@ async function runAlphaSwapOrder({ walletAddress, token, chain, comment }, onUpd
     paid = await payOrder(client, config, orderId, sdkKey);
   }
 
-  onUpdate("paid", { orderId, paid });
+  onUpdate("paid", {
+    orderId,
+    paid,
+    message: "CROO payment locked. AlphaSwap is waiting for SentinelX report.",
+  });
 
   let delivery = null;
   const deliverStart = Date.now();
-  const maxDeliverWaitMs = 180000;
+  const maxDeliverWaitMs = Number(process.env.CROO_DELIVERY_TIMEOUT_MS || 180000);
 
   while (Date.now() - deliverStart < maxDeliverWaitMs) {
     const orderStatus = await getOrderStatus(client, config, orderId, sdkKey);
@@ -305,20 +340,192 @@ async function runAlphaSwapOrder({ walletAddress, token, chain, comment }, onUpd
     await sleep(3000);
   }
 
-  if (!delivery) {
-    throw new Error("Timed out waiting for SentinelX to deliver");
-  }
+  if (!delivery) throw new Error("Timed out waiting for SentinelX to deliver");
 
   onUpdate("delivered", { orderId, delivery, finishedAtUTC: nowUTC() });
-
   return { orderId, negotiationId, delivery };
 }
 
-function registerExecuteOrderRoute(app) {
-  app.post("/api/execute-order", async (req, res) => {
-    const { walletAddress, comment = "", token = "BNB", chain = "BSC" } = req.body || {};
+function tryParseJson(value) {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text.startsWith("{") && !text.startsWith("[")) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
 
-    if (!isValidWallet(walletAddress)) {
+function findReportCandidate(value, depth = 0) {
+  if (!value || depth > 8) return null;
+
+  if (typeof value === "string") {
+    const parsed = tryParseJson(value);
+    return parsed ? findReportCandidate(parsed, depth + 1) : null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findReportCandidate(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof value === "object") {
+    const hasDecision =
+      value.decision || value.clearance || value.riskLevel || value.riskScore || value.safetyScore;
+    const looksLikeSentinelX =
+      String(value.agent || value.service || value.providerAgent || "").toLowerCase().includes("sentinel") ||
+      String(value.deliverableText || value.text || "").toLowerCase().includes("sentinelx");
+
+    if (hasDecision && (looksLikeSentinelX || value.proofHash || value.layers || value.flags)) {
+      return value;
+    }
+
+    const priorityKeys = [
+      "deliverableText",
+      "deliveryText",
+      "content",
+      "text",
+      "report",
+      "data",
+      "result",
+      "delivery",
+      "deliverable",
+      "order",
+    ];
+
+    for (const key of priorityKeys) {
+      if (key in value) {
+        const found = findReportCandidate(value[key], depth + 1);
+        if (found) return found;
+      }
+    }
+
+    for (const item of Object.values(value)) {
+      const found = findReportCandidate(item, depth + 1);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
+function extractSentinelXReport(delivery, fallback = {}) {
+  const report = findReportCandidate(delivery) || {};
+
+  return {
+    source: "real-croo-order",
+    requesterAgentId: "AlphaSwap Requester",
+    providerAgentId: "CROO SentinelX",
+    orderId: fallback.orderId || report.orderId || report.order_id || "-",
+    status: "RESULT_DECLARED",
+    lifecycle: ["REQUEST", "ACCEPT", "LOCK", "DELIVER", "RESULT_DECLARED"],
+    ...report,
+    deliveryRaw: delivery,
+    resultDeclaredAtUTC: nowUTC(),
+  };
+}
+
+function normalizeDecisionText(report = {}) {
+  return String(report.decision || report.clearance || report.riskLevel || "").toUpperCase();
+}
+
+function isBlockedOrRisky(report = {}) {
+  const text = JSON.stringify(report).toUpperCase();
+  const decision = normalizeDecisionText(report);
+
+  return (
+    decision.includes("MISSION BLOCKED") ||
+    decision.includes("MISSION_BLOCKED") ||
+    decision === "BLOCK" ||
+    decision.includes("CAUTION") ||
+    Number(report.safetyScore) < 70 ||
+    Number(report.riskScore) >= 31 ||
+    text.includes("HONEYPOT") ||
+    text.includes("PHISHING")
+  );
+}
+
+function isClearanceGranted(report = {}) {
+  const decision = normalizeDecisionText(report);
+  const riskLevel = String(report.riskLevel || "").toUpperCase();
+
+  return (
+    !isBlockedOrRisky(report) &&
+    (decision.includes("CLEARANCE GRANTED") ||
+      decision.includes("CLEARANCE_GRANTED") ||
+      riskLevel === "SAFE")
+  );
+}
+
+function sendSse(res, event, data) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+async function executeSwapAfterDeclaredReport({ report, walletAddress, recipientAddress, amountUsdc, minWethOut }) {
+  if (!isClearanceGranted(report)) {
+    return {
+      ok: true,
+      swapExecuted: false,
+      swapStatus: "STOPPED_BY_SENTINELX",
+      reason: `Result declared: ${report.decision || report.riskLevel || "not safe"}. AlphaSwap stopped before router execution.`,
+    };
+  }
+
+  if (String(process.env.EXECUTE_REAL_SWAP_AFTER_SENTINELX || "").toLowerCase() !== "true") {
+    return {
+      ok: true,
+      swapExecuted: false,
+      swapStatus: "READY_BUT_ENV_DISABLED",
+      reason:
+        "SentinelX returned CLEARANCE GRANTED. Set EXECUTE_REAL_SWAP_AFTER_SENTINELX=true in .env to execute the real swap.",
+    };
+  }
+
+  const { executeUsdcToWethAfterClearance } = require("./safeSwapExecutor");
+  if (typeof executeUsdcToWethAfterClearance !== "function") {
+    throw new Error("safeSwapExecutor.js not loaded");
+  }
+
+  return await executeUsdcToWethAfterClearance({
+    recipientAddress: recipientAddress || walletAddress,
+    amountUsdc: amountUsdc || process.env.DEFAULT_SWAP_USDC_AMOUNT || "0.05",
+    minWethOut: minWethOut || process.env.DEFAULT_MIN_WETH_OUT || "0",
+  });
+}
+
+function buildRequestPayload(body = {}) {
+  const comment = String(body.comment || "").trim();
+  const tokenFromComment = comment.match(/Token:\s*([A-Za-z0-9_]+)/i)?.[1];
+  const chainFromComment = comment.match(/Chain:\s*([A-Za-z0-9_]+)/i)?.[1];
+  const tokenContractFromComment = comment.match(/TokenContract:\s*(0x[a-fA-F0-9]{40})/i)?.[1];
+  const outputTokenFromComment =
+    comment.match(/(?:OutputToken|Output Token|ToToken|To Token):\s*([A-Za-z0-9._-]+)/i)?.[1] ||
+    comment.match(/(?:swap|convert|exchange)\s+[A-Za-z0-9._-]+\s+(?:to|for|into|->)\s+([A-Za-z0-9._-]+)/i)?.[1] ||
+    comment.match(/to\s+(WETH|ETH|WBTC|BTC|USDC|USDT|BNB|SOL)\b/i)?.[1];
+
+  return {
+    walletAddress: String(body.walletAddress || "").trim(),
+    recipientAddress: String(body.recipientAddress || body.destinationAddress || body.walletAddress || "").trim(),
+    token: String(body.token || tokenFromComment || "BNB").toUpperCase(),
+    chain: String(body.chain || chainFromComment || "BSC").toUpperCase(),
+    tokenContract: String(body.tokenContract || tokenContractFromComment || "").trim(),
+    outputToken: String(body.outputToken || outputTokenFromComment || (String(body.token || tokenFromComment || "").toUpperCase() === "USDC" && String(body.chain || chainFromComment || "").toUpperCase() === "BASE" ? "WETH" : "")).toUpperCase(),
+    comment,
+    amountUsdc: String(body.amountUsdc || process.env.DEFAULT_SWAP_USDC_AMOUNT || "0.05"),
+    minWethOut: String(body.minWethOut || process.env.DEFAULT_MIN_WETH_OUT || "0"),
+  };
+}
+
+function createAlphaSwapMissionHandler(options = {}) {
+  return async (req, res) => {
+    const payload = buildRequestPayload(req.body || {});
+
+    if (!isValidWallet(payload.walletAddress)) {
       return res.status(400).json({
         ok: false,
         error: "Invalid wallet address. Expected 0x-prefixed 40 hex chars.",
@@ -331,28 +538,133 @@ function registerExecuteOrderRoute(app) {
       Connection: "keep-alive",
     });
 
-    const send = (event, data) => {
-      res.write(`event: ${event}\n`);
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
-    };
-
     try {
-      const result = await runAlphaSwapOrder(
-        { walletAddress, comment, token, chain },
-        (step, data) => send(step, data)
+      sendSse(res, "mission_started", {
+        ok: true,
+        message: "AlphaSwap requester started. SentinelX will be hired before any swap.",
+        payload,
+        createdAtUTC: nowUTC(),
+      });
+
+      const orderResult = await runAlphaSwapOrder(payload, (step, data) => sendSse(res, step, data));
+
+      const report = extractSentinelXReport(orderResult.delivery, {
+        orderId: orderResult.orderId,
+      });
+
+      report.orderId = orderResult.orderId;
+      report.negotiationId = orderResult.negotiationId;
+      report.walletAddress = report.walletAddress || payload.walletAddress;
+      report.token = report.token || payload.token;
+      report.chain = report.chain || payload.chain;
+      report.tokenContract = report.tokenContract || payload.tokenContract;
+      report.destinationAddress = report.destinationAddress || payload.recipientAddress;
+      report.recipientAddress = report.recipientAddress || payload.recipientAddress;
+      report.sourceWalletAddress = report.sourceWalletAddress || payload.walletAddress;
+      report.amountUsdc = report.amountUsdc || payload.amountUsdc;
+      report.inputToken = report.inputToken || payload.token;
+      report.outputToken = report.outputToken || payload.outputToken || "WETH";
+      report.pair = report.pair || `${report.inputToken}/${report.outputToken}`;
+
+      if (typeof options.onReport === "function") options.onReport(report);
+
+      sendSse(res, "result_declared", {
+        ok: true,
+        report,
+        decision: report.decision || report.riskLevel || "RESULT_DECLARED",
+        message: `Result declared: ${report.decision || report.riskLevel || "UNKNOWN"}`,
+      });
+
+      if (!isClearanceGranted(report)) {
+        const stopped = await executeSwapAfterDeclaredReport({ report, ...payload });
+        const finalReport = {
+          ...report,
+          decision: "MISSION BLOCKED",
+          riskLevel: "BLOCK",
+          riskScore: 100,
+          safetyScore: 0,
+          swap: stopped,
+          lifecycle: [...(report.lifecycle || []), "SWAP_STOPPED"],
+          txHash: "",
+          baseExplorerUrl: "",
+          routerTxSubmitted: false,
+          swapStatus: "STOPPED_BY_SENTINELX",
+        };
+
+        if (typeof options.onReport === "function") options.onReport(finalReport);
+
+        sendSse(res, "swap_blocked", stopped);
+        sendSse(res, "done", {
+          ok: true,
+          orderId: orderResult.orderId,
+          negotiationId: orderResult.negotiationId,
+          report: finalReport,
+          swapExecuted: false,
+        });
+        return;
+      }
+
+      sendSse(res, "swap_started", {
+        ok: true,
+        message: "SentinelX returned CLEARANCE GRANTED. AlphaSwap can execute the real swap now.",
+      });
+
+      const swapResult = await executeSwapAfterDeclaredReport({ report, ...payload });
+      const swapExecuted = Boolean(
+        swapResult?.txHash || swapResult?.report?.txHash || swapResult?.swapStatus === "EXECUTED_AFTER_CLEARANCE"
       );
 
-      send("done", { ok: true, ...result });
+      const finalReport = {
+        ...report,
+        swap: swapResult,
+        lifecycle: [...(report.lifecycle || []), swapExecuted ? "REAL_SWAP_EXECUTED" : "SWAP_READY"],
+        txHash: swapResult?.txHash || swapResult?.report?.txHash || report.txHash || "",
+        baseExplorerUrl: swapResult?.baseExplorerUrl || (swapResult?.txHash ? `https://basescan.org/tx/${swapResult.txHash}` : ""),
+        recipientAddress: swapResult?.recipientAddress || payload.recipientAddress,
+        agentWallet: swapResult?.agentWallet || "",
+        inputToken: swapResult?.inputToken || report.inputToken || payload.token || "USDC",
+        outputToken: swapResult?.outputToken || report.outputToken || payload.outputToken || "WETH",
+        pair: swapResult?.pair || report.pair || `${payload.token || "USDC"}/${payload.outputToken || "WETH"}`,
+        amountIn: swapResult?.amountIn || `${payload.amountUsdc || process.env.DEFAULT_SWAP_USDC_AMOUNT || "0.05"} USDC`,
+        amountOut: swapResult?.amountOut || "",
+      };
+
+      if (typeof options.onReport === "function") options.onReport(finalReport);
+
+      sendSse(res, swapExecuted ? "swap_executed" : "swap_ready_not_executed", swapResult);
+      sendSse(res, "done", {
+        ok: true,
+        orderId: orderResult.orderId,
+        negotiationId: orderResult.negotiationId,
+        report: finalReport,
+        swapExecuted,
+      });
     } catch (err) {
-      send("error", { ok: false, error: err.message || String(err) });
+      sendSse(res, "error", { ok: false, error: err.message || String(err) });
     } finally {
       res.end();
     }
-  });
+  };
+}
+
+function registerAlphaSwapMissionRoute(app, options = {}) {
+  app.post("/api/alphaswap/start", createAlphaSwapMissionHandler(options));
+}
+
+function registerExecuteOrderRoute(app, options = {}) {
+  const handler = createAlphaSwapMissionHandler(options);
+
+  app.post("/api/alphaswap/start", handler);
+  app.post("/api/execute-order", handler);
+  app.post("/api/execute-real-order", handler);
 }
 
 module.exports = {
   registerExecuteOrderRoute,
+  registerAlphaSwapMissionRoute,
   runAlphaSwapOrder,
   isValidWallet,
+  extractSentinelXReport,
+  isClearanceGranted,
+  isBlockedOrRisky,
 };

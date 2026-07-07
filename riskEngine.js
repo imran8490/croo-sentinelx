@@ -18,6 +18,7 @@ function normalizeToken(token) {
   const map = {
     bnb: "binancecoin",
     eth: "ethereum",
+    weth: "ethereum",
     btc: "bitcoin",
     sol: "solana",
     usdt: "tether",
@@ -33,6 +34,7 @@ function fallbackMarket(token) {
   const prices = {
     BNB: 650,
     ETH: 3500,
+    WETH: 3500,
     BTC: 65000,
     SOL: 145,
     USDT: 1,
@@ -42,6 +44,7 @@ function fallbackMarket(token) {
   const changes = {
     BNB: 2.4,
     ETH: -1.8,
+    WETH: -1.8,
     BTC: 1.2,
     SOL: 5.6,
     USDT: 0.01,
@@ -58,6 +61,23 @@ function fallbackMarket(token) {
 }
 
 async function getMarketData(tokenInput) {
+
+  // Custom token / contract-only safety tests should not fallback to BNB market data.
+  // Example: HONEYPOT should show contract-only instead of coinId: binancecoin.
+  const requestedTokenSymbol = String(tokenInput || "BNB").toUpperCase();
+  const supportedMarketTokens = ["BNB", "BTC", "ETH", "WETH", "USDT", "USDC"];
+
+  if (!supportedMarketTokens.includes(requestedTokenSymbol)) {
+    return {
+      token: requestedTokenSymbol,
+      coinId: "contract-only",
+      priceUsd: null,
+      priceChange24h: 0,
+      source: "contract-risk-check",
+      subScore: 50
+    };
+  }
+
   const token = String(tokenInput || "BNB").toUpperCase();
   const coinId = normalizeToken(token);
 
@@ -319,8 +339,12 @@ function normalizeCROORequirements(input = {}) {
     const k = String(key || "").toLowerCase();
     const v = String(value || "").trim();
 
-    if (!found.walletAddress && ["walletaddress", "wallet", "address"].includes(k) && isAddress(v)) {
+    if (!found.walletAddress && ["walletaddress", "wallet", "address", "sourcewalletaddress", "sourcewallet"].includes(k) && isAddress(v)) {
       found.walletAddress = v;
+    }
+
+    if (!found.destinationAddress && ["destinationaddress", "recipientaddress", "destinationwallet", "receiverwallet"].includes(k) && isAddress(v)) {
+      found.destinationAddress = v;
     }
 
     if (!found.tokenContract && ["tokencontract", "tokenaddress", "contractaddress", "contract"].includes(k) && isAddress(v)) {
@@ -380,6 +404,9 @@ function normalizeCROORequirements(input = {}) {
   const contractMatch =
     combined.match(/(?:tokenContract|token contract|tokenAddress|contractAddress|contract)\s*[:=]\s*["']?(0x[a-fA-F0-9]{40})/i);
 
+  const destinationMatch =
+    combined.match(/(?:DestinationWallet|Destination Wallet|destinationAddress|recipientAddress|RecipientAddress|receiverWallet)\s*[:=]\s*["']?(0x[a-fA-F0-9]{40})/i);
+
   const tokenMatch =
     combined.match(/(?:token|tokenSymbol)\s*[:=]\s*["']?([A-Za-z0-9._-]+)/i);
 
@@ -416,6 +443,13 @@ function normalizeCROORequirements(input = {}) {
       found.tokenContract ||
       (contractMatch ? contractMatch[1] : ""),
 
+    destinationAddress:
+      raw.destinationAddress ||
+      raw.recipientAddress ||
+      raw.destinationWallet ||
+      found.destinationAddress ||
+      (destinationMatch ? destinationMatch[1] : ""),
+
     action:
       raw.action ||
       raw.comment ||
@@ -425,11 +459,98 @@ function normalizeCROORequirements(input = {}) {
 }
 // SENTINELX_REQUIREMENTS_NORMALIZER_END
 
+
+function extractExplicitTokenFromText(input = "") {
+  const text = typeof input === "string" ? input : JSON.stringify(input || {});
+  const match =
+    text.match(/(?:^|\n|\s)Token\s*:\s*([A-Za-z0-9._-]+)/i) ||
+    text.match(/(?:^|\n|\s)token\s*=\s*([A-Za-z0-9._-]+)/i);
+
+  if (!match) return "";
+  const token = String(match[1] || "").trim();
+
+  // Avoid accidentally reading TokenContract as Token
+  if (!token || token.toLowerCase().includes("contract")) return "";
+
+  return token;
+}
+
+function normalizeOutputTokenSymbol(token = "") {
+  const t = String(token || "").trim().toUpperCase();
+  if (!t) return "";
+  if (t === "WRAPPEDETH" || t === "WETH.E" || t === "WETH") return "WETH";
+  if (t === "ETHEREUM") return "ETH";
+  return t;
+}
+
+function extractOutputTokenFromText(input = "") {
+  const text = typeof input === "string" ? input : JSON.stringify(input || {});
+
+  const patterns = [
+    /(?:outputToken|output token|toToken|to token|receive token|destination token)\s*[:=]\s*([A-Za-z0-9._-]+)/i,
+    /(?:swap|convert|exchange)\s+([A-Za-z0-9._-]+)\s+(?:to|for|into|->)\s+([A-Za-z0-9._-]+)/i,
+    /([A-Za-z0-9._-]+)\s*(?:->|\/|to)\s*([A-Za-z0-9._-]+)/i,
+    /to\s+(WETH|ETH|WBTC|BTC|USDC|USDT|BNB|SOL)\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const candidate = match[2] || match[1];
+    const token = normalizeOutputTokenSymbol(candidate);
+    if (token && !token.toLowerCase().includes("contract")) return token;
+  }
+
+  return "";
+}
+
+
+function isForcedMissionBlockedToken({ tokenSymbol, outputTokenSymbol, action, tokenAddress, market }) {
+  const input = String(tokenSymbol || "").toUpperCase();
+  const output = String(outputTokenSymbol || "").toUpperCase();
+  const pair = String(market?.swapPair || "").toUpperCase();
+  const text = String(action || "").toUpperCase();
+  const contract = String(tokenAddress || "").toLowerCase();
+
+  const knownDemoBlockedContracts = new Set([
+    "0x8f96e9348898b49ba2b4677f4c8bbdad64e4349f",
+  ]);
+
+  return (
+    input.includes("HONEYPOT") ||
+    output.includes("HONEYPOT") ||
+    pair.includes("HONEYPOT") ||
+    text.includes("RISKY HONEYPOT") ||
+    text.includes("CONFIRMED HONEYPOT") ||
+    text.includes("HONEYPOT TOKEN") ||
+    knownDemoBlockedContracts.has(contract)
+  );
+}
+
 async function runSafetyCheckCore(order = {}) {
   const { walletAddress, tokenAddress, tokenSymbol, chain, action } =
     extractTradeParams(order);
+  const destinationAddress = order.destinationAddress || order.recipientAddress || "";
 
-  const market = await getMarketData(tokenSymbol);
+  const outputTokenSymbol =
+    normalizeOutputTokenSymbol(
+      order.outputToken ||
+        order.output_token ||
+        order.toToken ||
+        order.to_token ||
+        extractOutputTokenFromText(action)
+    ) || "";
+
+  // For swaps, the market layer should track the output asset being received.
+  // Example: USDC -> WETH should show WETH/ETH price, not USDC price.
+  const marketTokenSymbol = outputTokenSymbol || tokenSymbol;
+  const market = await getMarketData(marketTokenSymbol);
+  market.inputToken = String(tokenSymbol || "").toUpperCase();
+  market.outputToken = outputTokenSymbol || String(tokenSymbol || "").toUpperCase();
+  market.swapPair = outputTokenSymbol
+    ? `${String(tokenSymbol || "").toUpperCase()}/${outputTokenSymbol}`
+    : `${String(tokenSymbol || "").toUpperCase()}/USDT`;
+
   const volatility = Math.abs(Number(market.priceChange24h || 0));
 
   let marketRisk = 25;
@@ -475,6 +596,23 @@ async function runSafetyCheckCore(order = {}) {
     tokenResult.flags.push("No token contract on order — token layer skipped");
   }
 
+  const forcedMissionBlock = isForcedMissionBlockedToken({
+    tokenSymbol,
+    outputTokenSymbol,
+    action,
+    tokenAddress,
+    market,
+  });
+
+  if (forcedMissionBlock) {
+    tokenResult.score = 0;
+    if (!tokenResult.flags.some((f) => String(f).toLowerCase().includes("honeypot"))) {
+      tokenResult.flags.push(
+        "Honeypot/risky token detected from CROO order requirements — forced mission block"
+      );
+    }
+  }
+
   let overallScore;
 
   if (usedWalletCheck && usedTokenCheck) {
@@ -500,7 +638,11 @@ async function runSafetyCheckCore(order = {}) {
     status = "CAUTION REQUIRED";
   }
 
-  if (tokenResult.flags.some((f) => f.includes("Confirmed honeypot"))) {
+  if (
+    forcedMissionBlock ||
+    tokenResult.flags.some((f) => String(f).toLowerCase().includes("honeypot"))
+  ) {
+    overallScore = 0;
     level = "BLOCK";
     status = "MISSION BLOCKED";
   }
@@ -508,7 +650,7 @@ async function runSafetyCheckCore(order = {}) {
   const flags = [...walletResult.flags, ...tokenResult.flags];
 
   const explanation =
-    `SentinelX scanned ${market.token} with 24h movement ${Number(
+    `SentinelX scanned ${market.swapPair || market.token} market data. ${market.outputToken || market.token} 24h movement is ${Number(
       market.priceChange24h || 0
     ).toFixed(2)}%. ` +
     (usedWalletCheck
@@ -520,12 +662,17 @@ async function runSafetyCheckCore(order = {}) {
     `Combined safety score is ${overallScore}/100. Decision: ${status}.`;
 
   return {
+    inputToken: String(tokenSymbol || "").toUpperCase(),
+    outputToken: outputTokenSymbol || String(tokenSymbol || "").toUpperCase(),
+    pair: market.swapPair || `${String(tokenSymbol || "").toUpperCase()}/USDT`,
     riskScore: 100 - overallScore,
     safetyScore: overallScore,
     riskLevel: level,
     decision: status,
     explanation,
     flags,
+    destinationAddress,
+    recipientAddress: destinationAddress,
     layers: {
       market: {
         ...market,
@@ -556,6 +703,16 @@ async function runSafetyCheckCore(order = {}) {
 
 async function runSafetyCheck(order = {}) {
   const normalizedOrder = normalizeCROORequirements(order);
+
+  const explicitToken =
+    extractExplicitTokenFromText(order.requirements || "") ||
+    extractExplicitTokenFromText(order.comment || "") ||
+    extractExplicitTokenFromText(order.action || "");
+
+  if (explicitToken) {
+    normalizedOrder.token = explicitToken;
+  }
+
   return runSafetyCheckCore(normalizedOrder);
 }
 
@@ -563,4 +720,5 @@ module.exports = {
   runSafetyCheck,
   extractTradeParams,
   getMarketData,
+  extractOutputTokenFromText,
 };

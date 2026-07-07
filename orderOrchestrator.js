@@ -21,7 +21,17 @@ const crypto = require("crypto");
 const axios = require("axios");
 const { ethers } = require("ethers");
 const { runSafetyCheck, extractTradeParams } = require("./riskEngine");
+function formatCrooUsdcAmount(value) {
+  if (value === undefined || value === null) return "0.10 USDC";
 
+  const clean = String(value).replace("USDC", "").trim();
+  const num = Number(clean);
+
+  if (!Number.isFinite(num)) return "0.10 USDC";
+
+  const human = num >= 1000 ? num / 1_000_000 : num;
+  return `${human.toFixed(2)} USDC`;
+}
 const ESCROW_ABI = [
   "function deliverReport(uint256 orderId, uint8 verdict, bytes32 reportHash, string reportURI) external",
   "function getOrder(uint256 orderId) external view returns (tuple(address requester, address provider, uint256 amount, uint256 createdAt, uint256 deadline, uint8 status, uint8 verdict, bytes32 reportHash, string reportURI))",

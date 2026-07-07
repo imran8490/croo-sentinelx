@@ -432,36 +432,62 @@
       <div class="badge">CROO A2A Provider Agent</div>
       <h1>SentinelX A2A Safety Lifecycle Console</h1>
       <p class="subtitle">
-        Real Agent-to-Agent safety flow: AlphaSwap creates a CROO order, SentinelX scans risk,
-        delivers a proof report, and CROO handles payment lifecycle.
+        Real Agent-to-Agent safety flow: AlphaSwap hires SentinelX through CROO, SentinelX declares the risk result,
+        and AlphaSwap executes the real swap only when the report says CLEARANCE GRANTED.
       </p>
 
       <div class="actions">
-        <button id="runBtn">Send A2A Clearance Request</button>
-        <button id="refreshBtn" class="secondary">Refresh Latest Report</button>
+        <button id="startMissionBtn">Start AlphaSwap Mission</button>
       </div>
 
       <div class="panel executeBox" id="executePanel">
-        <div class="label">Execute Real CROO Order (AlphaSwap → SentinelX)</div>
+        <div class="label">AlphaSwap Mission: hire SentinelX first, swap only after SAFE report</div>
 
-        <label for="walletInput" class="formLabel">Wallet address to check</label>
+        <label for="walletInput" class="formLabel">Wallet address to check / source swap wallet</label>
         <input
           id="walletInput"
           type="text"
-          placeholder="0x08e391A5ea432DB8a38d4a3155fF386146cE6c94"
+          placeholder="Agent wallet public address / wallet to check"
           style="width: 100%; padding: 11px;"
         />
+
+        <label for="destinationInput" class="formLabel">Destination wallet address / WETH receiver</label>
+        <input
+          id="destinationInput"
+          type="text"
+          placeholder="Wallet that should receive WETH after the swap"
+          style="width: 100%; padding: 11px;"
+        />
+
+        <label for="amountUsdcInput" class="formLabel">Swap amount in USDC</label>
+        <input
+          id="amountUsdcInput"
+          type="number"
+          min="0"
+          step="0.01"
+          placeholder="0.05"
+          style="width: 100%; padding: 11px;"
+        />
+
+        <p class="status" style="margin-top: 8px;">
+          Real swap source is the SWAP_PRIVATE_KEY wallet. WETH output will be sent to the destination wallet above. Market display uses WETH/ETH price for USDC → WETH swaps.
+        </p>
 
         <label for="commentInput" class="formLabel">Comment / notes (optional)</label>
         <textarea
           id="commentInput"
-          rows="2"
-          placeholder="e.g. checking before swapping into BNB on BSC"
+          rows="6"
+          placeholder="Example:
+Wallet: 0x08e391A5ea432DB8a38d4a3155fF386146cE6c94
+Token: HONEYPOT
+Chain: BSC
+TokenContract: 0x8f96e9348898b498a2b4677f4c8abdad64e4349f
+Action: Pre-swap honeypot safety check before AlphaSwap executes any trade."
           style="width: 100%; padding: 11px;"
         ></textarea>
 
         <div style="margin-top: 13px;">
-          <button id="executeBtn">Execute Real CROO Order</button>
+          <button id="executeBtn" style="display:none">Legacy Execute Button</button>
         </div>
 
         <p id="executeStatus" class="status"></p>
@@ -508,7 +534,7 @@
           </div>
 
           <div class="paymentMessage" id="paymentFlowMessage">
-            Click Execute Real CROO Order to watch the real A2A payment lifecycle.
+            Click Start AlphaSwap Mission to watch: AlphaSwap → SentinelX hire → report declared → swap decision.
           </div>
         </div>
       </div>
@@ -545,7 +571,7 @@
         <h2>Requester Agent</h2>
         <p><b>Agent:</b> <span id="requesterAgent">-</span></p>
         <p><b>Order ID:</b> <span id="orderId">-</span></p>
-        <p><b>Amount:</b> <span id="amount">-</span></p>
+        <p><b>Swap Amount:</b> <span id="amount">-</span></p>
         <p><b>Pair:</b> <span id="pair">-</span></p>
         <p><b>Chain:</b> <span id="chain">-</span></p>
         <span class="pill">ORDER LOCKED</span>
@@ -557,7 +583,7 @@
         <h2>Risk Engine</h2>
         <p><b>Wallet Risk:</b> checked</p>
         <p><b>Token Risk:</b> checked / skipped if native token</p>
-        <p><b>Market Risk:</b> checked</p>
+        <p><b>Market Risk:</b> output asset checked (WETH/ETH for USDC → WETH)</p>
         <p><b>Risk Level:</b> <span id="riskLevel">-</span></p>
         <p><b>Risk Score:</b> <span id="scanRiskScore">-</span></p>
         <span id="scanPill" class="pill">SAFE</span>
@@ -576,16 +602,19 @@
 
       <div class="panel step">
         <div class="stepNumber">4</div>
-        <div class="label">Payment / Settlement</div>
-        <h2>CROO Lifecycle</h2>
+        <div class="label">Result / Swap Gate</div>
+        <h2>Safe Execution</h2>
         <p><b>Status:</b> <span id="orderStatus">-</span></p>
+        <p><b>Swap Source:</b> <span id="swapSourceWallet">-</span></p>
+        <p><b>Destination:</b> <span id="recipientAddress">-</span></p>
         <p><b>Tx:</b> <span id="txHash">No tx yet</span></p>
+        <p><b>Base Link:</b> <a id="baseTxLink" href="#" target="_blank" rel="noopener" style="color:#53ff9f; word-break:break-word;">No tx yet</a></p>
         <div class="timeline" id="lifecycleTimeline">
           <span>LOCK</span>
           <span>DELIVER</span>
           <span>CLEAR</span>
         </div>
-        <span class="pill">PAYMENT READY</span>
+        <span class="pill">REPORT FIRST</span>
       </div>
     </section>
 
@@ -595,7 +624,7 @@
         <p><b>1.</b> AlphaSwap Requester sends a pre-swap clearance request.</p>
         <p><b>2.</b> SentinelX scans wallet, token, and market risk.</p>
         <p><b>3.</b> SentinelX generates a proof hash and delivers the report.</p>
-        <p><b>4.</b> CROO lifecycle moves through LOCK → DELIVER → CLEAR.</p>
+        <p><b>4.</b> Result is declared: SAFE executes real swap; BLOCK/CAUTION stops before router execution.</p>
       </div>
 
       <div class="panel">
@@ -679,27 +708,27 @@
         if (!t.trim()) return;
 
         if (t.includes("done") || t.includes("completed") || t.includes("real order completed") || t.includes("cleared")) {
-          completePaymentFlow("Done — real CROO A2A order completed / delivered.");
+          completePaymentFlow("Done — SentinelX report declared and AlphaSwap decision completed.");
           return;
         }
 
         if (t.includes("delivered") || t.includes("delivering") || t.includes("delivery")) {
-          setPaymentStep(4, "SentinelX is delivering the risk report to CROO.");
+          setPaymentStep(4, "SentinelX delivered the risk report. Waiting for result declaration.");
           return;
         }
 
         if (t.includes("paid") || t.includes("pay") || t.includes("escrow") || t.includes("payment lock")) {
-          setPaymentStep(3, "CROO payment is being locked in escrow.");
+          setPaymentStep(3, "CROO payment is locked. AlphaSwap is waiting for SentinelX.");
           return;
         }
 
         if (t.includes("accepted")) {
-          setPaymentStep(2, "SentinelX accepted the A2A safety mission.");
+          setPaymentStep(2, "SentinelX accepted AlphaSwap hire request.");
           return;
         }
 
         if (t.includes("negotiation") || t.includes("created") || t.includes("requesting")) {
-          setPaymentStep(1, "AlphaSwap sent a real CROO order request.");
+          setPaymentStep(1, "AlphaSwap sent a real CROO hire request to SentinelX.");
           return;
         }
 
@@ -743,14 +772,14 @@
       document.addEventListener("DOMContentLoaded", () => {
         resetPaymentFlow();
 
-        const executeBtn = el("executeBtn");
+        const executeBtn = el("startMissionBtn") || el("executeBtn");
         const executeStatus = el("executeStatus");
         const rawJson = el("rawJson");
 
         if (executeBtn) {
           executeBtn.addEventListener("click", () => {
             resetPaymentFlow();
-            setPaymentStep(1, "AlphaSwap is creating a real CROO A2A order...");
+            setPaymentStep(1, "AlphaSwap is hiring SentinelX through CROO...");
           });
         }
 
@@ -769,7 +798,6 @@
     })();
   </script>
 
-  <script src="./app.js?v=sentinelx-final-design"></script>
-  <script src="./paymentFlowStable.js?v=stable-1"></script>
+  <script src="./app.js?v=weth-market-v2"></script>
 </body>
 </html>

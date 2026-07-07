@@ -1,34 +1,22 @@
 {
   "name": "croo-sentinelx",
   "version": "1.0.0",
-  "description": "CROO SentinelX - A2A pre-swap safety clearance agent",
+  "description": "CROO SentinelX A2A Pre-Swap Safety Agent",
   "main": "server.js",
+  "type": "commonjs",
   "scripts": {
-    "start": "NODE_OPTIONS=--dns-result-order=ipv4first node server.js",
-    "provider": "NODE_OPTIONS=--dns-result-order=ipv4first node provider.js",
-    "requester": "NODE_OPTIONS=--dns-result-order=ipv4first node requester.js",
-    "orchestrator": "node orderOrchestrator.js",
-    "dev": "NODE_OPTIONS=--dns-result-order=ipv4first node server.js"
+    "start": "node server.js",
+    "provider": "node provider.js",
+    "provider:clean": "NODE_OPTIONS=--dns-result-order=ipv4first node provider.js 2>&1 | grep -v 'fetch failed'",
+    "deploy:escrow": "node scripts/deployEscrowDirect.js"
   },
-  "keywords": [
-    "croo",
-    "sentinelx",
-    "a2a",
-    "ai-agent",
-    "defi",
-    "risk-engine",
-    "pre-swap",
-    "web3"
-  ],
-  "author": "Imran",
-  "license": "MIT",
   "dependencies": {
     "@croo-network/sdk": "^0.2.1",
-    "axios": "^1.7.0",
+    "axios": "^1.7.9",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "ethers": "^6.13.0",
-    "express": "^4.19.2",
-    "uuid": "^10.0.0"
+    "dotenv": "^16.4.7",
+    "ethers": "^6.17.0",
+    "express": "^4.18.2",
+    "solc": "^0.8.30"
   }
 }

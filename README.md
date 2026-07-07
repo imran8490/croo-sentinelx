@@ -1,531 +1,582 @@
-
-# CROO SentinelX
-
-## Pre-Swap Safety Clearance Agent for CROO A2A
-
-CROO SentinelX is a pre-swap safety clearance agent built on the CROO A2A ecosystem.
-
-Before a trading agent executes a swap, it should know whether the trade is safe or risky. SentinelX acts as a safety checkpoint before execution.
-
-In this project:
-
-- AlphaSwap is the requester agent.
-- SentinelX is the provider agent.
-- CROO handles the A2A order, service payment, delivery proof, and settlement.
-- SentinelX delivers a risk report before AlphaSwap executes the trade.
-
-SentinelX does not execute swaps directly. It provides a pre-swap safety report.
-
----
-
-## Project Summary
-
-AlphaSwap wants to execute a BNB to USDT trade.
-
-Before the trade happens, AlphaSwap hires SentinelX through CROO. SentinelX scans risk and returns a safety clearance report with a decision, risk score, safety score, proof hash, and delivery data.
-
-CROO manages the complete A2A lifecycle:
-
-Order Request -> Accept Mission -> Payment Lock -> Report Delivery -> Clear / Complete
-
----
-
-## Why SentinelX Matters
-
-Autonomous trading agents can act fast, but fast execution can also create risk.
-
-Before a swap, an agent should check:
-
-- Wallet risk
-- Token contract risk
-- Market movement
-- Honeypot or scam token signals
-- Final safety decision
-
-SentinelX gives trading agents a safety layer before they act.
-
----
-
-## How It Works
-
-AlphaSwap Requester Agent
-        |
-        v
-Creates A2A safety request through CROO
-        |
-        v
-CROO creates order and locks service payment
-        |
-        v
-SentinelX Provider Agent accepts the mission
-        |
-        v
-SentinelX runs the risk engine
-        |
-        v
-SentinelX delivers safety report to CROO
-        |
-        v
-CROO clears the order and completes settlement
-
----
-
-## Agent Roles
-
-### AlphaSwap Requester
-
-AlphaSwap is the requester agent.
-
-It represents a trading agent that wants to execute a BNB to USDT trade, but first requests a safety clearance report.
-
-### CROO SentinelX Provider
-
-SentinelX is the provider agent.
-
-It listens for CROO orders, accepts safety check missions, runs the risk engine, and delivers the final report.
-
-### CROO Network
-
-CROO handles:
-
-- Agent-to-agent order creation
-- Service payment
-- Payment lock
-- Report delivery tracking
-- Proof JSON
-- Settlement lifecycle
-
----
-
-## Core Features
-
-- Real CROO A2A provider agent
-- AlphaSwap requester agent
-- Real CROO order execution
-- USDC service payment through CROO
-- Live payment lifecycle dashboard
-- Risk score and safety score
-- Proof hash generation
-- CROO delivery JSON proof
-- Wallet risk layer
-- Market risk layer
-- Token contract risk layer
-- Honeypot detection proof
-- Mission blocked verdict for risky token contracts
-
----
-
-## Risk Engine
-
-SentinelX calculates a safety report using multiple layers.
-
-### 1. Market Risk Layer
-
-Checks market data such as token price and 24-hour movement.
-
-Example:
-
-Token: BNB
-Market Source: CoinGecko
-24h Movement: checked
-
-### 2. Wallet Risk Layer
-
-Checks the target wallet address when provided.
-
-Example:
-
-Wallet Address: 0x08e391A5ea432DB8a38d4a3155fF386146cE6c94
-Wallet Layer: Active
-
-### 3. Token Contract Risk Layer
-
-Checks BEP20 token contracts when a contract address is provided.
-
-For native BNB, token contract scanning is skipped because BNB is a native coin and does not have a BEP20 contract address.
-
-For BEP20 tokens, SentinelX can scan the token contract.
-
-### 4. Honeypot Detection
-
-SentinelX can detect risky token contracts and return a block verdict before a swap is executed.
-
----
-
-## Safety Decisions
-
-SentinelX returns one of three decisions:
-
-CLEARANCE GRANTED
-CAUTION REQUIRED
-MISSION BLOCKED
-
-### CLEARANCE GRANTED
-
-The trade appears safe enough to continue.
-
-### CAUTION REQUIRED
-
-The trade has some risk signals and should be reviewed carefully.
-
-### MISSION BLOCKED
-
-The token or trade is risky enough that the swap should not proceed.
-
----
-
-## Real CROO A2A Payment Proof
-
-CROO SentinelX completed a real A2A service flow through CROO.
-
-AlphaSwap Requester hired SentinelX Provider through CROO. CROO locked the USDC service payment, SentinelX delivered the safety clearance report, and CROO completed the settlement.
-
-The CROO lifecycle showed:
-
-LOCK -> DELIVER -> CLEAR
-
-This proves:
-
-Real CROO A2A order
-Real USDC service payment
-Real SentinelX report delivery
-Real CROO settlement
-
-Balance movement also confirmed the payment settlement:
-
-AlphaSwap Requester balance decreased
-SentinelX Provider balance increased
-
-This proves that SentinelX is not only a local simulation. It completed a real CROO A2A service transaction.
-
----
-
-## Honeypot Token Detection Proof
-
-SentinelX also supports token-contract risk checks for BEP20 tokens on BSC.
-
-To prove the token-risk layer, SentinelX was tested with a honeypot token contract address on BSC:
-
-0x8f96e9348898b498a2b4677f4c8abdad64e4349f
-
-This test was a safety check only. No swap was executed.
-
-SentinelX detected the token contract risk and returned:
-
-Decision: MISSION BLOCKED
-Risk Level: BLOCK
-Flag: Confirmed honeypot token
-
-This proves SentinelX can block a dangerous trade before AlphaSwap executes it.
-
----
-
-## Important Scope
-
-SentinelX does not execute swaps directly.
-
-SentinelX provides a pre-swap safety clearance report before another agent executes the trade.
-
-Correct scope:
-
-AlphaSwap = trade intent / requester agent
-SentinelX = pre-swap safety report provider
-CROO = A2A order, payment, delivery proof, and settlement layer
-
-This project proves a real CROO A2A service flow, not a direct token swap.
-
----
-
-## Dashboard
-
-The dashboard shows:
-
-- Requester agent
-- Provider agent
-- Order ID
-- Decision
-- Risk score
-- Safety score
-- Proof hash
-- Transaction hash
-- Latest proof JSON
-- Live CROO payment lifecycle
-
-Lifecycle UI:
-
-Order Request -> Accept Mission -> Payment Lock -> Report Delivery -> Clear / Complete
-
----
-
-## Report Delivery
-
-SentinelX delivers the report directly inside the CROO delivery JSON.
-
-The dashboard may show:
-
-Report URI: Embedded in CROO delivery JSON
-
-This means the report is included in the CROO delivery payload and verified using:
-
-- Proof hash
-- Transaction hash
-- CROO View JSON
-- Delivery ID
-
----
-
-## Demo Proof Checklist
-
-The final demo shows:
-
-CROO SentinelX dashboard
-Server terminal running
-Provider terminal running
-Real CROO order execution
-CROO order completed
-LOCK -> DELIVER -> CLEAR lifecycle
-Proof hash
-Transaction hash
-Delivery JSON
-Payment settlement
-Honeypot token blocked with MISSION BLOCKED
-
----
-
-## Tech Stack
-
-- Node.js
-- Express.js
-- CROO Network SDK
-- CROO A2A order/payment flow
-- CoinGecko market data
-- GoPlus token security checks
-- HTML / CSS / JavaScript dashboard
-
----
-
-## Project Structure
-
-SentinelX/
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+CROO SentinelX – Pre-Swap Safety Clearance Agent for AlphaSwap
+--------------------------------------------------------------------------------------------------------------------------------------------------------//
+
+CROO SentinelX is a pre-swap safety clearance agent built for the CROO A2A ecosystem.
+
+AlphaSwap is the requester agent. SentinelX is the provider agent. AlphaSwap cannot execute a swap directly. It must first hire SentinelX through CROO, wait for a verified safety report, and only continue if SentinelX returns CLEARANCE_GRANTED.
+
+If SentinelX returns MISSION_BLOCKED or CAUTION, the swap stops before router execution.
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Problem:
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Autonomous trading agents can execute swaps quickly, but they also need a safety layer before touching the router.
+
+Without a pre-swap safety gate, an agent may swap into risky tokens, honeypots, suspicious contracts, or unsafe market conditions.
+
+CROO SentinelX solves this by forcing AlphaSwap to request a safety report before execution.
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Solution:
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+CROO SentinelX works as a safety clearance provider.
+
+AlphaSwap first creates a CROO A2A mission. SentinelX accepts the mission, checks the wallet, token, chain, and market risk, then delivers a safety report.
+
+Only a CLEARANCE_GRANTED result unlocks the real swap.
+
+MISSION_BLOCKED stops the swap before router execution.
+
+
+Project Flow:
+
+1. User starts AlphaSwap mission from the dashboard.
+2. AlphaSwap requester creates a CROO A2A order.
+3. SentinelX provider accepts the mission.
+4. CROO payment is locked for the SentinelX safety report.5. 
+5. SentinelX runs the risk engine.
+6. SentinelX checks:
+    -Wallet risk
+    -Token risk
+    -Chain information
+    -Market risk
+    -Honeypot signals
+7. SentinelX delivers the safety report.
+8. Dashboard declares the final result.
+9. If result is CLEARANCE_GRANTED:
+    -AlphaSwap unlocks the swap gate
+    -External source wallet signs the transaction
+    -USDC is swapped to WETH on Base
+    -WETH is sent to the destination wallet
+    -BaseScan transaction link is shown
+10. If result is MISSION_BLOCKED:
+    -AlphaSwap stops before router execution
+    -No real swap transaction is submitted
+    -Dashboard shows blocked proof
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Full A2A LifeCycle
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+AlphaSwap Requester
+↓
+CROO Mission Created
+↓
+SentinelX Provider Accepts Mission
+↓
+CROO Payment Lock
+↓
+SentinelX Risk Engine Scan
+↓
+Report Delivered
+↓
+Result Declared
+↓
+CLEARANCE_GRANTED or MISSION_BLOCKED
+↓
+Real Swap or Stop
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Safe Swap Flow
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+External Source Wallet
+↓
+Holds USDC on Base
+↓
+SentinelX Safety Check
+↓
+CLEARANCE_GRANTED
+↓
+USDC to WETH Swap
+↓
+WETH sent to Destination Wallet
+↓
+BaseScan Transaction Proof
+
+In this flow, AlphaSwap is only the CROO requester agent. The real swap is executed from an external source wallet using the backend private key.
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Blocked Honeypot Flow
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+AlphaSwap creates mission
+↓
+SentinelX scans risky token
+↓
+HONEYPOT detected
+↓
+MISSION_BLOCKED
+↓
+No router transaction
+↓
+Swap stopped before execution
+
+This proves SentinelX is not just a report tool. It controls whether AlphaSwap can execute or not.
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Demo Results
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Safe Mission
+
+Token: USDC
+Chain: BASE
+Route: USDC to WETH
+Result: CLEARANCE_GRANTED
+Swap Status: Real swap executed
+Proof: BaseScan transaction hash and destination wallet proof
+
+Blocked Mission
+
+Token: HONEYPOT
+Chain: BSC
+Result: MISSION_BLOCKED
+Swap Status: Stopped before router execution
+Proof: No real swap transaction submitted
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Project Structure
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+CROO-SentinelX
+│
 ├── server.js
 ├── provider.js
-├── requester.js
+├── Requester.js
 ├── executeOrderRoute.js
 ├── riskEngine.js
+├── safeSwapExecutor.js
+├── escrowAfterSentinelX.js
+├── orderOrchestrator.js
+├── hardhat.config.js
 ├── package.json
+├── package-lock.json
 ├── README.md
 ├── .env.example
-├── public/
-│   ├── index.html
-│   ├── app.js
-│   └── paymentFlowStable.js
-└── data/
-    └── croo-orders.json
+├── .gitignore
+│
+├── public
+│ ├── index.html
+│ ├── app.js
+│ └── styles.css
+│
+├── scripts
+│ └── contract / deployment helper scripts
+│
+└── service
+└── optional market / helper services
 
----
+Files Used
 
-## Environment Setup
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+server.js
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Main backend server.
 
-Create a .env file in the project root.
+It runs the dashboard API, handles AlphaSwap mission requests, syncs CROO order reports, and connects the frontend with the backend flow.
 
-Do not commit .env to GitHub.
+Main responsibilities:
 
-Example:
+	Start Express server
+	Serve dashboard
+	Receive AlphaSwap start mission request
+	Trigger CROO order flow
+	Store latest proof JSON
+	Show transaction hash and BaseScan link
+	Handle safe and blocked mission results
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+provider.js
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+SentinelX provider agent.
+
+This file listens for CROO missions, accepts AlphaSwap requests, runs SentinelX risk checks, and delivers the final report back through CROO.
+
+Main responsibilities:
+
+	Start SentinelX provider
+	Listen for CROO order events
+	Accept missions
+	Run risk engine
+	Deliver report
+	Sync result to local dashboard
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Requester.js
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+AlphaSwap requester agent.
+
+This file represents the requester side of the A2A flow. AlphaSwap creates a mission and hires SentinelX through CROO.
+
+Main responsibilities:
+
+	Create CROO negotiation
+	Send mission requirements
+	Wait for SentinelX acceptance
+	Track CROO order ID
+	Receive delivered report
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+executeOrderRoute.js
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Main execution route.
+
+This file controls the important rule: no SentinelX clearance means no swap.
+
+Main responsibilities:
+
+	Start AlphaSwap mission
+	Hire SentinelX
+	Wait for report
+	Check decision
+	If CLEARANCE_GRANTED, execute swap
+	If MISSION_BLOCKED or CAUTION, stop swap
+	Return final proof to dashboard
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+riskEngine.js
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+SentinelX risk engine.
+
+This file checks token, wallet, chain, and market risk before a swap is allowed.
+
+Main responsibilities:
+
+	Check market data
+	Check wallet risk
+	Check token risk
+	Detect honeypot mission
+	Calculate risk score
+	Calculate safety score
+	Return CLEARANCE_GRANTED or MISSION_BLOCKED
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+safeSwapExecutor.js
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Real swap executor.
+
+This file executes the real USDC to WETH swap on Base only after SentinelX returns CLEARANCE_GRANTED.
+
+Main responsibilities:
+
+	Use external source wallet private key
+	Check USDC balance
+	Approve router if needed
+	Execute USDC to WETH swap
+	Send WETH output to destination wallet
+	Return transaction hash
+	Return BaseScan link
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+escrowAfterSentinelX.js
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Escrow helper logic.
+
+This file supports escrow-style post-SentinelX execution flow. It can be used for payment lock, release, block, or refund style logic.
+
+Main responsibilities:
+
+	Fund escrow order
+	Release order after clearance
+	Block order after failed safety result
+	Refund blocked mission if needed
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+orderOrchestrator.js
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Orchestration layer.
+
+This file connects the order input, risk engine, report creation, proof hash, and optional contract delivery.
+
+Main responsibilities:
+
+	Accept order input
+	Extract trade parameters
+	Run SentinelX safety check
+	Build proof report
+	Generate proof hash
+	Sync result to dashboard
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+hardhat.config.js
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Hardhat configuration 
+
+Used for smart contract deployment or contract interaction setup.
+
+Main responsibilities:
+
+	Configure Solidity version
+	Configure Base network
+	Load deploy wallet from environment variables
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+public/index.html
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Frontend dashboard UI.
+
+Main responsibilities:
+
+	Show AlphaSwap mission form
+	Show source wallet
+	Show destination wallet
+	Show swap amount
+	Show CROO lifecycle
+	Show SentinelX decision
+	Show risk score and safety score
+	Show transaction hash and BaseScan link
+	Show latest proof JSON
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+public/app.js
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Frontend dashboard logic.
+
+Main responsibilities:
+
+	Handle Start AlphaSwap Mission button
+	Send request to backend
+	Update lifecycle UI
+	Render safe result
+	Render blocked result
+	Show proof JSON
+	Show BaseScan link
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+public/styles.css
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Dashboard styling.
+
+Main responsibilities:
+
+	Layout design
+	Cards
+	Timeline UI
+	Status colors
+	Safe / blocked indicators
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+package.json
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Project dependency and script file.
+
+Main responsibilities:
+
+	Store Node.js dependencies
+	Store project scripts
+	Help install required packages using npm install
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+.env.example
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Example environment configuration.
+
+This file shows required environment variables without exposing private keys.
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+.gitignore
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Git ignore file.
+
+This prevents private and local files from being uploaded to GitHub.
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Environment Setup
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Create a local .env file and add your own keys.
 
 PORT=8000
 
 CROO_API_URL=https://api.croo.network
 CROO_WS_URL=wss://api.croo.network/ws
 
-CROO_SDK_KEY=YOUR_SENTINELX_PROVIDER_KEY
-CROO_API_KEY=YOUR_SENTINELX_PROVIDER_KEY
+ALPHASWAP_SDK_KEY=your_alphaswap_sdk_key
+CROO_SDK_KEY=your_sentinelx_sdk_key
+CROO_TARGET_SERVICE_ID=your_sentinelx_service_id
 
-ALPHASWAP_SDK_KEY=YOUR_ALPHASWAP_REQUESTER_KEY
+BASE_RPC_URL=https://mainnet.base.org
+SWAP_PRIVATE_KEY=your_external_source_wallet_private_key
 
-CROO_TARGET_SERVICE_ID=YOUR_SENTINELX_SERVICE_ID
-CROO_SERVICE_ID=YOUR_SENTINELX_SERVICE_ID
+BASE_SWAP_ROUTER=0x2626664c2603336E57B271c5C0b26F421741e481
+BASE_USDC_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+BASE_WETH_ADDRESS=0x4200000000000000000000000000000000000006
+BASE_USDC_WETH_FEE=500
 
-CROO_AGENT_WALLET=YOUR_SENTINELX_PROVIDER_WALLET
+EXECUTE_REAL_SWAP_AFTER_SENTINX=true
+DEFAULT_SWAP_USDC_AMOUNT=0.05
+DEFAULT_MIN_WETH_OUT=0
+DEMO_ALLOW_ZERO_MIN_OUT=true
 
-DEMO_WALLET_ADDRESS=0x08e391A5ea432DB8a38d4a3155fF386146cE6c94
-DEMO_TOKEN=BNB
-DEMO_CHAIN=BSC
+Do not upload .env to GitHub. Do not share private keys or API keys publicly.
 
-Important:
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Install
+--------------------------------------------------------------------------------------------------------------------------------------------------------
 
-CROO_SDK_KEY and ALPHASWAP_SDK_KEY must be different.
-
-If both keys are the same, CROO may treat the requester and provider as the same agent.
-
----
-
-## Install
+Run:
 
 npm install
 
----
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Run Dashboard Server
+--------------------------------------------------------------------------------------------------------------------------------------------------------
 
-## Run the Dashboard Server
+Run:
 
-Terminal 1:
-
-cd ~/SentinelX
-npm start
+node server.js
 
 Open:
 
 http://localhost:8000
 
----
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Run SentinelX Provider
+--------------------------------------------------------------------------------------------------------------------------------------------------------
 
-## Run the SentinelX Provider
+Open a second terminal and run:
 
-Terminal 2:
+node provider.js
 
-cd ~/SentinelX
-npm run provider
+The provider listens for CROO missions, accepts the mission, runs the risk engine, and delivers the SentinelX safety report.
 
-For a cleaner demo terminal, use:
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+How To Test Safe Swap
+--------------------------------------------------------------------------------------------------------------------------------------------------------
 
-npm run provider:clean
+Use this mission:
 
-The provider listens for CROO orders and delivers the safety report.
-
----
-
-## Run a Real CROO Order
-
-Use the dashboard button:
-
-Execute Real CROO Order
-
-Example wallet:
-
-0x08e391A5ea432DB8a38d4a3155fF386146cE6c94
-
-Example comment:
-
-Wallet: 0x08e391A5ea432DB8a38d4a3155fF386146cE6c94
-Token: BNB
-Chain: BSC
-Action: Pre-swap safety clearance before AlphaSwap executes a BNB to USDT trade on BSC.
+Token: USDC
+Chain: BASE
+TokenContract: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+Action: AlphaSwap wants to swap USDC to WETH. SentinelX must check safety first. 
+        If the report says CLEARANCE_GRANTED, AlphaSwap executes the real swap. 
+        If the report says CAUTION or MISSION_BLOCKED, AlphaSwap stops before router execution.
 
 Expected result:
 
-CROO order created
-SentinelX accepted
-Payment locked
-Report delivered
-CROO cleared/completed
+	Decision: CLEARANCE_GRANTED
+	Real swap executed
+	Transaction hash shown
+	BaseScan link shown
+	Destination wallet receives WETH
 
----
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+How To Test Honeypot Block
+--------------------------------------------------------------------------------------------------------------------------------------------------------
 
-## Honeypot Safety Test
+Use this mission:
 
-This test proves token contract risk detection.
-
-No swap is executed.
-
-Wallet: 0x08e391A5ea432DB8a38d4a3155fF386146cE6c94
 Token: HONEYPOT
 Chain: BSC
-TokenContract: 0x8f96e9348898b498a2b4677f4c8abdad64e4349f
-Action: Honeypot safety check.
+TokenContract: 0x8f96e9348898b49Ba2b4677f4c8bbdad64e4349f
+Action: AlphaSwap wants to test a risky honeypot token before swap execution. 
+        SentinelX must check the token contract first. 
+        If the report says MISSION_BLOCKED, AlphaSwap must stop before router execution and no real swap should happen.
 
 Expected result:
 
-Decision: MISSION BLOCKED
-Risk Level: BLOCK
-Flag: Confirmed honeypot token
+	Decision: MISSION_BLOCKED
+	Risk Score: 100
+	Safety Score: 0
+	Router Tx: No tx
+	Swap Status: Blocked before execution
 
----
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Dashboard Proof
+--------------------------------------------------------------------------------------------------------------------------------------------------------
 
-## API Endpoints
+The dashboard shows:
 
-### Health Check
+	CROO order ID
+	Requester agent
+	Provider agent
+	SentinelX decision
+	Risk score
+	Safety score
+	Source wallet
+	Destination wallet
+	Transaction hash
+	BaseScan link
+	Latest proof JSON
 
-GET /api/health
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Important GitHub Upload Note
+--------------------------------------------------------------------------------------------------------------------------------------------------------
 
-### Local Risk Check
+Do not upload these files:
 
-POST /api/risk-check
+	.env
+	node_modules
+	screenshots
+	backup files
+	Zone.Identifier files
+	local history JSON files
+	private keys
+	API keys
 
-### Latest Report
+Recommended upload files:
 
-GET /api/latest-report
+	server.js
+	provider.js
+	Requester.js
+	executeOrderRoute.js
+	riskEngine.js
+	safeSwapExecutor.js
+	escrowAfterSentinelX.js	
+	orderOrchestrator.js
+	public folder
+	scripts folder if used
+	service folder if used
+	package.json
+	package-lock.json
+	README.md
+	.env.example
+	.gitignore
 
-### Execute Real CROO Order
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Key Rule
+--------------------------------------------------------------------------------------------------------------------------------------------------------
 
-POST /api/execute-order
+No SentinelX clearance means no AlphaSwap execution.
 
----
+AlphaSwap can only execute the real swap after SentinelX delivers a verified CLEARANCE_GRANTED report.
 
-## Example Safety Report
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Demo Video Summary
+--------------------------------------------------------------------------------------------------------------------------------------------------------
 
-{
-  "agent": "CROO SentinelX",
-  "service": "Pre-trade Safety Clearance",
-  "decision": "CAUTION REQUIRED",
-  "riskScore": 40,
-  "safetyScore": 60,
-  "riskLevel": "CAUTION",
-  "proofHash": "example-proof-hash",
-  "lifecycle": ["LOCK", "DELIVER", "CLEAR"]
-}
+The demo includes two scenarios.
 
----
+First, a safe USDC to WETH swap on Base. SentinelX returns CLEARANCE_GRANTED, and the real swap is executed.
 
-## Demo Video Script Summary
+Second, a honeypot blocked mission. SentinelX returns MISSION_BLOCKED, and no router transaction is submitted.
 
-CROO SentinelX is a pre-swap safety agent built on CROO A2A.
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Project Tagline
+--------------------------------------------------------------------------------------------------------------------------------------------------------
 
-AlphaSwap hires SentinelX before executing a BNB to USDT trade.
+SentinelX is a pre-trade safety gate for autonomous trading agents.
 
-CROO locks the USDC service payment.
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+Security Note
+--------------------------------------------------------------------------------------------------------------------------------------------------------
 
-SentinelX runs the risk engine and delivers a safety report.
+This project is built for demo and hackathon purposes. Do not use real funds without proper testing, slippage protection, security review, and production-level monitoring.
 
-The order is completed with LOCK, DELIVER, and CLEAR.
-
-This proves real A2A payment settlement.
-
-SentinelX does not execute the swap directly.
-
-It provides safety clearance before another agent executes the trade.
-
----
-
-## Security Notes
-
-Do not upload these files or values to GitHub:
-
-.env
-API keys
-Private keys
-Wallet seed phrases
-Secret tokens
-
-Use .env.example for public configuration examples.
-
----
-
-## Limitations
-
-- SentinelX does not execute swaps directly.
-- It provides a safety clearance report before execution.
-- Native BNB does not have a token contract, so token-contract checks are skipped for native BNB.
-- BEP20 token contract checks work when a token contract address is provided.
-- Honeypot detection was tested using a contract address only. No unsafe swap was executed.
-
----
-
-## Built By
-
-Built by Imran.
-
----
-
-## Final Summary
-
-CROO SentinelX proves a real A2A service flow where AlphaSwap hires SentinelX, CROO handles payment and settlement, SentinelX delivers a pre-swap safety report, and risky honeypot contracts can be blocked before trade execution.
-
+Private keys, API keys, .env, and local runtime data should never be uploaded to GitHub.

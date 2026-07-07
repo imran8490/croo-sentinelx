@@ -44,6 +44,23 @@ function isDeliverableOrder(status) {
  * Falls back to "0.10 USDC" only if nothing is found anywhere — and logs
  * a warning so we notice and can fix the field name once we see a real order.
  */
+function formatCrooUsdcAmount(value, currency = "USDC") {
+  if (value === null || value === undefined || value === "") return "0.10 USDC";
+
+  const rawText = String(value).trim();
+  const clean = rawText.replace(/USDC/gi, "").replace(/,/g, "").trim();
+  const num = Number(clean);
+
+  if (!Number.isFinite(num)) return rawText;
+
+  // CROO returns USDC in raw 6-decimal units in some order payloads.
+  // Example: 100000 raw units = 0.10 USDC.
+  const looksLikeRawUsdcUnits = num >= 1000 && String(currency || "USDC").toUpperCase().includes("USDC");
+  const human = looksLikeRawUsdcUnits ? num / 1_000_000 : num;
+
+  return `${human.toFixed(2)} USDC`;
+}
+
 function extractOrderAmount(order = {}, delivered = {}) {
   const raw = order.raw || order;
   const deliveredOrder = delivered?.order || {};
@@ -63,8 +80,8 @@ function extractOrderAmount(order = {}, delivered = {}) {
     return "0.10 USDC";
   }
 
-  const finalAmount = `${rawAmount} ${rawCurrency}`;
-  console.log(`💰 Real order amount found: ${finalAmount}`);
+  const finalAmount = formatCrooUsdcAmount(rawAmount, rawCurrency);
+  console.log(`💰 CROO service payment amount: ${finalAmount}`);
   return finalAmount;
 }
 
@@ -85,16 +102,86 @@ function extractWalletFromText(text = "") {
   return m ? m[0] : "";
 }
 
+function extractRequirementsObject(order = {}) {
+  const candidates = [
+    order.requirements,
+    order.requirement,
+    order.raw?.requirements,
+    order.data?.requirements,
+    order.payload?.requirements,
+    order.description,
+    order.text,
+  ];
+
+  for (const c of candidates) {
+    if (!c) continue;
+    if (typeof c === "object") return c;
+    if (typeof c === "string") {
+      try {
+        const parsed = JSON.parse(c);
+        if (parsed && typeof parsed === "object") return parsed;
+      } catch {}
+    }
+  }
+
+  return {};
+}
+
+function extractDestinationFromOrder(order = {}) {
+  const req = extractRequirementsObject(order);
+  const text = JSON.stringify({ ...order, requirementsObject: req });
+  const direct =
+    order.destinationAddress ||
+    order.recipientAddress ||
+    order.destinationWallet ||
+    req.destinationAddress ||
+    req.recipientAddress ||
+    req.destinationWallet ||
+    req.receiverWallet ||
+    "";
+
+  if (direct && /^0x[a-fA-F0-9]{40}$/.test(String(direct).trim())) {
+    return String(direct).trim();
+  }
+
+  const m = text.match(/(?:DestinationWallet|Destination Wallet|destinationAddress|RecipientAddress|recipientAddress|receiverWallet)\s*[:=]\s*["']?(0x[a-fA-F0-9]{40})/i);
+  return m ? m[1] : "";
+}
+
+function extractSourceFromOrder(order = {}) {
+  const req = extractRequirementsObject(order);
+  return (
+    order.walletAddress ||
+    order.sourceWalletAddress ||
+    req.walletAddress ||
+    req.sourceWalletAddress ||
+    extractWalletFromText(order.requirements || order.text || order.description || "") ||
+    ""
+  );
+}
+
 async function buildRiskReport(order = {}) {
   console.log("🔎 RAW ORDER PAYLOAD (for field-name check):", JSON.stringify(order, null, 2));
 
   const safety = await runSafetyCheck(order);
+  const requirements = extractRequirementsObject(order);
+  const sourceWalletAddress = extractSourceFromOrder(order);
+  const destinationAddress = extractDestinationFromOrder(order);
 
   const report = {
     agent: "CROO SentinelX",
     service: "Pre-trade Safety Clearance",
     orderId: order.orderId || order.id || order.order_id || "unknown",
     serviceId: order.serviceId || order.service_id || process.env.CROO_SERVICE_ID || "",
+    requirements,
+    walletAddress: sourceWalletAddress,
+    sourceWalletAddress,
+    destinationAddress,
+    recipientAddress: destinationAddress,
+    inputToken: requirements.inputToken || requirements.token || safety.inputToken || "",
+    outputToken: requirements.outputToken || safety.outputToken || "",
+    amountUsdc: requirements.amountUsdc || "",
+    swapPair: requirements.swapPair || safety.pair || "",
     requesterAgentId:
       order.requesterAgentId || order.requester_agent_id || order.requesterAgentID || "",
     providerAgentId:
@@ -127,16 +214,31 @@ async function syncOrderToLocalDashboard({ orderId, report, delivered, order }) 
           delivered?.order?.status ||
           delivered?.status ||
           "completed", // fallback: deliverOrder succeeded, so order should be at least delivered/completed
-        riskScore: report.riskScore,
+        decision: report.decision,
         clearance: report.decision,
+        riskScore: report.riskScore,
+        safetyScore: report.safetyScore,
+        riskLevel: report.riskLevel,
         proofHash: report.proofHash,
-        txHash:
+        // This is CROO delivery/payment proof, not a router swap tx.
+        // Keep router txHash empty unless AlphaSwap actually executes the swap.
+        txHash: "",
+        crooDeliveryTxHash:
           delivered?.txHash ||
           delivered?.deliverTxHash ||
           delivered?.order?.deliverTxHash ||
           delivered?.order?.txHash ||
           "",
         amount: extractOrderAmount(order, delivered),
+        amountUsdc: report.amountUsdc || "",
+        inputToken: report.inputToken || "",
+        outputToken: report.outputToken || "",
+        pair: report.swapPair || report.pair || "",
+        flags: report.flags || [],
+        layers: report.layers || {},
+        destinationAddress: report.destinationAddress || "",
+        recipientAddress: report.recipientAddress || report.destinationAddress || "",
+        sourceWalletAddress: report.sourceWalletAddress || report.walletAddress || "",
         requesterAgentId:
           delivered?.order?.requesterAgentId ||
           order?.requesterAgentId ||
@@ -331,10 +433,24 @@ async function acceptNegotiationSafe(negotiationId) {
               event?.orderId;
 
             if (
-              (type === "order_created" || type === "order_negotiation_created") &&
-              negotiationId
+              negotiationId &&
+              (
+                type === "negotiation_created" ||
+                type === "negotiation_updated" ||
+                type === "order_negotiation_created" ||
+                type === "order_created" ||
+                String(type || "").toLowerCase().includes("negotiation")
+              )
             ) {
-              await acceptNegotiationSafe(negotiationId);
+              const accepted = await acceptNegotiationSafe(negotiationId);
+              const acceptedOrderId =
+                accepted?.orderId || accepted?.order_id || accepted?.order?.orderId || orderId;
+              const requirements = raw.requirements || event?.requirements || accepted?.requirements;
+
+              if (acceptedOrderId && requirements && !orderRequirements.has(acceptedOrderId)) {
+                orderRequirements.set(acceptedOrderId, requirements);
+                console.log(`📋 Cached requirements for order ${acceptedOrderId}`);
+              }
             }
 
             if (

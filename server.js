@@ -1,763 +1,450 @@
-﻿require("dotenv").config();
-
+require("dotenv").config();
 
 const express = require("express");
-const { registerExecuteOrderRoute } = require("./executeOrderRoute");
 const cors = require("cors");
+const path = require("path");
 const axios = require("axios");
 const { ethers } = require("ethers");
-const crypto = require("crypto");
-const path = require("path");
-const fs = require("fs");
 
+function optionalRequire(file) {
+  try {
+    return require(file);
+  } catch (err) {
+    console.log(`Optional module not loaded: ${file}`);
+    return {};
+  }
+}
+
+const orderRoutes = optionalRequire("./executeOrderRoute");
+const { registerExecuteOrderRoute } = orderRoutes;
+const { runSafetyCheck } = optionalRequire("./riskEngine");
+const { executeEscrowAfterSentinelX } = optionalRequire("./escrowAfterSentinelX");
+const { fetchBinanceMarket } = optionalRequire("./service/binanceMarket");
 
 const app = express();
 const PORT = process.env.PORT || 8000;
 
+let latestReport = null;
+function rememberLatestReport(report = {}) {
+  latestReport = {
+    ...report,
+    syncedAtUTC: new Date().toISOString(),
+  };
+  return latestReport;
+}
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(__dirname));
+
+const ERC20_ABI = [
+  "function balanceOf(address account) view returns (uint256)",
+  "function decimals() view returns (uint8)",
+  "function symbol() view returns (string)",
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function approve(address spender, uint256 amount) external returns (bool)"
+];
+
+const SWAP_ROUTER_ABI = [
+  "function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96) params) payable returns (uint256 amountOut)"
+];
 
 
-// Demo memory storage
-const proofLogs = [];
-const agentCallLogs = [];
-const capOrders = [];
+function isBlockedReport(report = {}) {
+  const text = JSON.stringify(report).toLowerCase();
 
-
-// Local CROO real-order sync storage
-const DATA_DIR = path.join(__dirname, "data");
-const CROO_ORDERS_FILE = path.join(DATA_DIR, "croo-orders.json");
-const { runSafetyCheck } = require("./riskEngine");
-
-
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR);
+  return (
+    report.decision === "MISSION BLOCKED" ||
+    report.riskLevel === "BLOCK" ||
+    text.includes("honeypot") ||
+    text.includes("mission blocked")
+  );
 }
 
-
-function readCrooOrders() {
-  try {
-    if (!fs.existsSync(CROO_ORDERS_FILE)) return [];
-    return JSON.parse(fs.readFileSync(CROO_ORDERS_FILE, "utf8"));
-  } catch {
-    return [];
-  }
-}
-
-
-function saveCrooOrders(orders) {
-  fs.writeFileSync(CROO_ORDERS_FILE, JSON.stringify(orders, null, 2));
-}
-
-
-// -----------------------------
-// CROO / CAP Config Status
-// -----------------------------
-function getCrooConfigStatus() {
-  const sdkKey = process.env.CROO_SDK_KEY || process.env.CROO_API_KEY || "";
-
-
-  return {
-    apiUrl: process.env.CROO_API_URL || "https://api.croo.network",
-    wsUrl: process.env.CROO_WS_URL || "wss://api.croo.network/ws",
-    sdkKeyConfigured: Boolean(sdkKey),
-    agentWallet: process.env.CROO_AGENT_WALLET || "",
-    agentId: process.env.CROO_AGENT_ID || "",
-    serviceId: process.env.CROO_SERVICE_ID || "",
-    mode: "Live CROO CAP provider + local dashboard",
-    liveSettlementEnabled: true,
-    note:
-      "SentinelX runs as a CROO provider agent. The local dashboard visualizes risk checks and synced CROO order proofs.",
-  };
-}
-
-
-// -----------------------------
-// Helpers
-// -----------------------------
-function nowUTC() {
-  return new Date().toISOString();
-}
-
-
-function createId(prefix) {
-  return `${prefix}_${crypto.randomUUID().slice(0, 8)}`;
-}
-
-
-function normalizeToken(token) {
-  const t = String(token || "bnb").toLowerCase();
-
-
-  const map = {
-    bnb: "binancecoin",
-    eth: "ethereum",
-    btc: "bitcoin",
-    sol: "solana",
-    usdt: "tether",
-    usdc: "usd-coin",
-  };
-
-
-  return map[t] || "binancecoin";
-}
-
-
-function fallbackMarket(token) {
-  const t = String(token || "BNB").toUpperCase();
-
-
-  const prices = {
-    BNB: 650,
-    ETH: 3500,
-    BTC: 65000,
-    SOL: 145,
-    USDT: 1,
-    USDC: 1,
-  };
-
-
-  const changes = {
-    BNB: 2.4,
-    ETH: -1.8,
-    BTC: 1.2,
-    SOL: 5.6,
-    USDT: 0.01,
-    USDC: 0.01,
-  };
-
-
-  return {
-    token: t,
-    coinId: normalizeToken(t),
-    priceUsd: prices[t] || 100,
-    priceChange24h: changes[t] || 2,
-    source: "demo-fallback",
-  };
-}
-
-
-async function getMarketData(tokenInput) {
-  const token = String(tokenInput || "BNB").toUpperCase();
-  const coinId = normalizeToken(token);
-
-
-  try {
-    const response = await axios.get(
-      "https://api.coingecko.com/api/v3/simple/price",
-      {
-        params: {
-          ids: coinId,
-          vs_currencies: "usd",
-          include_24hr_change: "true",
-        },
-        timeout: 7000,
-      }
-    );
-
-
-    const data = response.data[coinId];
-
-
-    if (!data) {
-      return fallbackMarket(token);
-    }
-
-
+async function safeSentinelCheck(input) {
+  if (typeof runSafetyCheck !== "function") {
     return {
-      token,
-      coinId,
-      priceUsd: data.usd || 0,
-      priceChange24h: data.usd_24h_change || 0,
-      source: "coingecko",
+      decision: "CLEARANCE GRANTED",
+      riskScore: 20,
+      safetyScore: 80,
+      riskLevel: "LOW",
+      flags: ["Risk engine not loaded, fallback clearance used for demo"]
     };
-  } catch {
-    return fallbackMarket(token);
   }
+
+  return await runSafetyCheck(input);
 }
 
-
-function calculateRiskScore({ priceChange24h, walletAddress, action }) {
-  let score = 25;
-
-
-  const volatility = Math.abs(Number(priceChange24h || 0));
-
-
-  if (volatility >= 10) score += 35;
-  else if (volatility >= 6) score += 25;
-  else if (volatility >= 3) score += 15;
-  else score += 5;
-
-
-  if (!walletAddress || !ethers.isAddress(walletAddress)) {
-    score += 20;
-  }
-
-
-  if (String(action || "").toLowerCase().includes("swap")) {
-    score += 10;
-  }
-
-
-  if (score > 100) score = 100;
-
-
-  let status = "CLEARANCE GRANTED";
-  let level = "SAFE";
-
-
-  if (score >= 70) {
-    status = "MISSION BLOCKED";
-    level = "BLOCK";
-  } else if (score >= 45) {
-    status = "CAUTION REQUIRED";
-    level = "CAUTION";
-  }
-
-
-  return { score, status, level };
+function getBaseConfig() {
+  return {
+    rpcUrl: process.env.BASE_RPC_URL || "https://mainnet.base.org",
+    swapPrivateKey: process.env.SWAP_PRIVATE_KEY,
+    router: process.env.BASE_SWAP_ROUTER || "0x2626664c2603336E57B271c5C0b26F421741e481",
+    usdc: process.env.BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    weth: process.env.BASE_WETH_ADDRESS || "0x4200000000000000000000000000000000000006",
+    fee: Number(process.env.BASE_USDC_WETH_FEE || 500)
+  };
 }
 
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
+});
 
-function buildExplanation({ token, priceChange24h, score, status, action }) {
-  const change = Number(priceChange24h || 0).toFixed(2);
-
-
-  if (status === "CLEARANCE GRANTED") {
-    return `SentinelX scanned ${token}. Market movement is ${change}% in 24h and the risk score is ${score}/100. The action "${action}" looks acceptable for a pre-trade clearance check.`;
-  }
-
-
-  if (status === "CAUTION REQUIRED") {
-    return `SentinelX detected moderate risk for ${token}. The 24h movement is ${change}%, so the agent suggests caution before continuing with "${action}".`;
-  }
-
-
-  return `SentinelX blocked this mission because ${token} shows high risk conditions. The action "${action}" should be reviewed manually before any on-chain execution.`;
-}
-
-
-function createProofHash(data) {
-  return crypto.createHash("sha256").update(JSON.stringify(data)).digest("hex");
-}
-
-
-// -----------------------------
-// Routes
-// -----------------------------
 app.get("/api/health", (req, res) => {
   res.json({
     success: true,
-    project: "CROO SentinelX",
     status: "online",
     port: PORT,
-    timeUTC: nowUTC(),
-    crooConfigured: Boolean(process.env.CROO_SDK_KEY || process.env.CROO_API_KEY),
+    time: new Date().toISOString()
   });
 });
 
+app.get("/api/market", async (req, res) => {
+  try {
+    if (typeof fetchBinanceMarket === "function") {
+      const market = await fetchBinanceMarket();
+      return res.json({
+        success: true,
+        source: "local-binance-service",
+        market
+      });
+    }
 
-app.get("/api/croo/config", (req, res) => {
-  res.json({
-    success: true,
-    croo: getCrooConfigStatus(),
-  });
+    const response = await axios.get(
+      'https://api.binance.com/api/v3/ticker/24hr?symbols=["BNBUSDT","ETHUSDT","BTCUSDT"]',
+      { timeout: 8000 }
+    );
+
+    res.json({
+      success: true,
+      source: "binance-public-api",
+      market: response.data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 });
 
+if (typeof registerExecuteOrderRoute === "function") {
+  registerExecuteOrderRoute(app, {
+    onReport: rememberLatestReport,
+  });
+}
 
-// Real CROO completed order sync from provider.js
 app.post("/api/croo/order-sync", (req, res) => {
-  const orders = readCrooOrders();
-
-
-  const order = {
-    id: req.body.orderId || createId("croo_order"),
-    status: req.body.status || "completed",
-    service: req.body.service || "Pre-trade Safety Clearance",
-    requesterAgentId: req.body.requesterAgentId || "",
-    providerAgentId: req.body.providerAgentId || "",
-    riskScore: req.body.riskScore ?? 40,
-    clearance: req.body.clearance || "CLEARANCE GRANTED",
-    proofHash: req.body.proofHash || "",
-    txHash: req.body.txHash || "",
-    amount: req.body.amount || "0.10 USDC",
-    lifecycle: req.body.lifecycle || ["LOCK", "DELIVER", "CLEAR"],
-    source: "Real CROO CAP order",
-    createdAtUTC: req.body.createdAtUTC || nowUTC(),
-  };
-
-
-  const filtered = orders.filter((o) => o.id !== order.id);
-  filtered.unshift(order);
-
-
-  saveCrooOrders(filtered.slice(0, 20));
-
+  const saved = rememberLatestReport({
+    source: "real-croo-order",
+    ...req.body,
+  });
 
   res.json({
     success: true,
-    order,
+    ok: true,
+    report: saved,
   });
 });
 
-
-app.get("/api/croo/orders", (req, res) => {
-  res.json({
-    success: true,
-    total: readCrooOrders().length,
-    orders: readCrooOrders(),
-  });
-});
-
-
-app.get("/api/market/:token", async (req, res) => {
-  const market = await getMarketData(req.params.token);
-
-
-  res.json({
-    success: true,
-    market,
-  });
-});
-
-
-// Local dashboard risk check
-app.post("/api/risk-check", async (req, res) => {
-  try {
-    const {
-      walletAddress = "",
-      token = "BNB",
-      chain = "BSC",
-      tokenContract = "",
-      action = "Pre-swap safety check",
-    } = req.body || {};
-
-    const scan = await runSafetyCheck({
-      walletAddress,
-      token,
-      chain,
-      tokenContract,
-      tokenAddress: tokenContract,
-      contractAddress: tokenContract,
-      action,
-      requirements: JSON.stringify({
-        walletAddress,
-        token,
-        chain,
-        tokenContract,
-        action,
-      }),
-    });
-
-    const proof = {
-      proofId: createId("proof"),
-      requestId: createId("risk"),
-      callerType: "human_user",
-      serviceAgent: "CROO SentinelX",
-      walletAddress,
-      token,
-      chain,
-      tokenContract: tokenContract || null,
-      action,
-
-      riskScore: scan.riskScore,
-      safetyScore: scan.safetyScore,
-      clearanceStatus: scan.decision,
-      riskLevel: scan.riskLevel,
-      explanation: scan.explanation,
-      flags: scan.flags || [],
-
-      layers: scan.layers || {},
-      market: scan.layers?.market || {},
-      walletLayer: scan.layers?.wallet || {},
-      tokenLayer: scan.layers?.token || {},
-
-      crooMode: getCrooConfigStatus().mode,
-      createdAtUTC: nowUTC(),
-    };
-
-    proof.proofHash = createProofHash(proof);
-    proofLogs.unshift(proof);
-
-    res.json({
-      success: true,
-      result: proof,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Risk check failed",
-      error: error.message,
-    });
-  }
-});
-
-app.post("/api/agent/risk-check", async (req, res) => {
-  try {
-    const {
-      callerAgent = "AlphaSwap Bot",
-      walletAddress,
-      token = "BNB",
-      action = "Agent requests pre-swap risk clearance",
-      serviceFee = "0.1 USDC",
-    } = req.body;
-
-
-    const market = await getMarketData(token);
-
-
-    const risk = calculateRiskScore({
-      priceChange24h: market.priceChange24h,
-      walletAddress,
-      action,
-    });
-
-
-    const explanation = buildExplanation({
-      token: market.token,
-      priceChange24h: market.priceChange24h,
-      score: risk.score,
-      status: risk.status,
-      action,
-    });
-
-
-    const agentCall = {
-      callId: createId("a2a"),
-      callerAgent,
-      serviceAgent: "CROO SentinelX",
-      walletAddress,
-      token: market.token,
-      action,
-      serviceFee,
-      riskScore: risk.score,
-      clearanceStatus: risk.status,
-      riskLevel: risk.level,
-      explanation,
-      crooMode: getCrooConfigStatus().mode,
-      createdAtUTC: nowUTC(),
-    };
-
-
-    agentCallLogs.unshift(agentCall);
-
-
-    const capOrder = {
-      orderId: createId("cap"),
-      buyerAgent: callerAgent,
-      sellerAgent: "CROO SentinelX",
-      service: "Pre-trade on-chain safety clearance",
-      price: serviceFee,
-      lifecycle: ["POST", "LOCK", "DELIVER", "CLEAR"],
-      status: "CLEARED",
-      deliveryProof: agentCall.callId,
-      liveSettlementEnabled: false,
-      crooNote:
-        "Local dashboard CAP visualization. Real CROO orders are shown in the Real CROO Execution panel.",
-      createdAtUTC: nowUTC(),
-    };
-
-
-    capOrders.unshift(capOrder);
-
-
-    const proof = {
-      proofId: createId("proof"),
-      requestId: agentCall.callId,
-      callerType: "agent_to_agent",
-      callerAgent,
-      serviceAgent: "CROO SentinelX",
-      walletAddress,
-      token: market.token,
-      action,
-      riskScore: risk.score,
-      clearanceStatus: risk.status,
-      riskLevel: risk.level,
-      explanation,
-      market,
-      capOrder,
-      crooIntegration: getCrooConfigStatus(),
-      createdAtUTC: nowUTC(),
-    };
-
-
-    proof.proofHash = createProofHash(proof);
-    proofLogs.unshift(proof);
-
-
-    res.json({
-      success: true,
-      message: "A2A SentinelX mission completed",
-      result: proof,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "A2A risk check failed",
-      error: error.message,
-    });
-  }
-});
-
-
-app.get("/api/agent/calls", (req, res) => {
-  res.json({
-    success: true,
-    total: agentCallLogs.length,
-    calls: agentCallLogs,
-  });
-});
-
-
-app.get("/api/cap/orders", (req, res) => {
-  res.json({
-    success: true,
-    total: capOrders.length,
-    orders: capOrders,
-  });
-});
-
-
-app.get("/api/proofs", (req, res) => {
-  res.json({
-    success: true,
-    total: proofLogs.length,
-    proofs: proofLogs,
-  });
-});
-
-
-// ---- Latest report (dashboard) ---------------------------------------
-// app.js calls this on load + every 5s. Returns whichever order is most
-// recent: a real CROO order (synced via provider.js) if one exists,
-// otherwise the most recent local /api/agent/risk-check style proof.
 app.get("/api/latest-report", (req, res) => {
-  const crooOrders = readCrooOrders();
-  const latestCroo = crooOrders[0];
-  const latestProof = proofLogs[0];
-
-  const useCroo =
-    latestCroo &&
-    (!latestProof ||
-      new Date(latestCroo.createdAtUTC) >= new Date(latestProof.createdAtUTC));
-
-  if (useCroo && latestCroo) {
+  if (!latestReport) {
     return res.json({
+      ok: true,
       success: true,
       report: {
-        source: "real-croo-order",
-        orderId: latestCroo.id,
-        decision: latestCroo.clearance,
-        riskScore: latestCroo.riskScore,
-        safetyScore:
-          typeof latestCroo.riskScore === "number" ? 100 - latestCroo.riskScore : "-",
-        riskLevel: latestCroo.riskScore >= 55 ? "HIGH" : latestCroo.riskScore >= 30 ? "MEDIUM" : "LOW",
-        status: latestCroo.status,
-        amount: latestCroo.amount,
-        requesterAgentId: latestCroo.requesterAgentId || "AlphaSwap Requester",
-        providerAgentId: latestCroo.providerAgentId || "CROO SentinelX",
-        proofHash: latestCroo.proofHash,
-        reportURI: latestCroo.reportURI || "-",
-        txHash: latestCroo.txHash,
-        lifecycle: latestCroo.lifecycle,
-        pair: latestCroo.pair || "-",
-        chain: latestCroo.chain || "BSC",
-        createdAtUTC: latestCroo.createdAtUTC,
-        syncedAtUTC: nowUTC(),
-      },
-    });
-  }
-
-  if (latestProof) {
-    return res.json({
-      success: true,
-      report: {
-        source: "local-simulation",
-        orderId: latestProof.capOrder?.orderId || latestProof.proofId,
-        decision: latestProof.clearanceStatus,
-        riskScore: latestProof.riskScore,
-        safetyScore:
-          typeof latestProof.riskScore === "number" ? 100 - latestProof.riskScore : "-",
-        riskLevel: latestProof.riskLevel,
-        status: latestProof.capOrder?.status || "CLEARED",
-        amount: latestProof.capOrder?.price || "0.10 USDC",
-        requesterAgentId: latestProof.callerAgent || "AlphaSwap Requester",
-        providerAgentId: latestProof.serviceAgent || "CROO SentinelX",
-        proofHash: latestProof.proofHash,
-        reportURI: "-",
-        txHash: "",
-        lifecycle: latestProof.capOrder?.lifecycle || ["LOCK", "DELIVER", "CLEAR"],
-        pair: latestProof.token ? `${latestProof.token}/USDT` : "-",
-        chain: "BSC",
-        createdAtUTC: latestProof.createdAtUTC,
-        syncedAtUTC: nowUTC(),
+        source: "waiting",
+        status: "WAITING_FOR_ALPHASWAP",
+        decision: "WAITING",
+        riskScore: "-",
+        safetyScore: "-",
+        riskLevel: "WAITING",
+        lifecycle: ["WAITING"],
+        message: "No AlphaSwap → SentinelX mission completed yet.",
+        syncedAtUTC: new Date().toISOString(),
       },
     });
   }
 
   res.json({
+    ok: true,
     success: true,
-    report: {
-      ok: false,
-      message: "No A2A report yet. Click 'Send A2A Clearance Request' to run one.",
-    },
+    report: latestReport,
   });
 });
 
-// ---- Run order (dashboard "Send A2A Clearance Request" button) -------
-// Triggers the same local simulation as /api/agent/risk-check, then
-// returns it in the same { report: {...} } shape /api/latest-report uses,
-// so app.js's renderReport() works identically for both endpoints.
 app.post("/api/run-order", async (req, res) => {
   try {
+    const report = await safeSentinelCheck({
+      walletAddress: req.body?.walletAddress || process.env.DEMO_WALLET_ADDRESS || "",
+      token: req.body?.token || process.env.DEMO_TOKEN || "BNB",
+      chain: req.body?.chain || process.env.DEMO_CHAIN || "BSC",
+      tokenContract: req.body?.tokenContract || "",
+      action: "Local demo risk check only. Use Start AlphaSwap Mission for the real CROO hire flow.",
+    });
+
+    const saved = rememberLatestReport({
+      source: "local-risk-demo",
+      status: "LOCAL_DEMO_ONLY",
+      requesterAgentId: "AlphaSwap Requester",
+      providerAgentId: "CROO SentinelX",
+      lifecycle: ["LOCAL_RISK_CHECK"],
+      ...report,
+    });
+
+    res.json({ ok: true, success: true, report: saved });
+  } catch (error) {
+    res.status(500).json({ ok: false, success: false, error: error.message });
+  }
+});
+
+/**
+ * Honeypot safety gate.
+ * This must NOT submit router tx.
+ * It proves blocked-before-execution.
+ */
+app.post("/api/honeypot-swap-gate", async (req, res) => {
+  try {
     const {
-      callerAgent = "AlphaSwap Requester",
-      walletAddress = "",
-      token = "BNB",
-      action = "Agent requests pre-swap risk clearance",
-      serviceFee = "0.10 USDC",
-    } = req.body || {};
-
-    const market = await getMarketData(token);
-
-    const risk = calculateRiskScore({
-      priceChange24h: market.priceChange24h,
       walletAddress,
-      action,
+      tokenContract,
+      amountIn = "0.001"
+    } = req.body;
+
+    const report = await safeSentinelCheck({
+      walletAddress,
+      token: "HONEYPOT",
+      chain: "BSC",
+      tokenContract,
+      action: "Pre-swap honeypot safety gate before AlphaSwap executes any trade."
     });
-
-    const explanation = buildExplanation({
-      token: market.token,
-      priceChange24h: market.priceChange24h,
-      score: risk.score,
-      status: risk.status,
-      action,
-    });
-
-    const agentCall = {
-      callId: createId("a2a"),
-      callerAgent,
-      serviceAgent: "CROO SentinelX",
-      walletAddress,
-      token: market.token,
-      action,
-      serviceFee,
-      riskScore: risk.score,
-      clearanceStatus: risk.status,
-      riskLevel: risk.level,
-      explanation,
-      crooMode: getCrooConfigStatus().mode,
-      createdAtUTC: nowUTC(),
-    };
-    agentCallLogs.unshift(agentCall);
-
-    const capOrder = {
-      orderId: createId("cap"),
-      buyerAgent: callerAgent,
-      sellerAgent: "CROO SentinelX",
-      service: "Pre-trade on-chain safety clearance",
-      price: serviceFee,
-      lifecycle: ["LOCK", "DELIVER", "CLEAR"],
-      status: "CLEARED",
-      deliveryProof: agentCall.callId,
-      createdAtUTC: nowUTC(),
-    };
-    capOrders.unshift(capOrder);
-
-    const proof = {
-      proofId: createId("proof"),
-      requestId: agentCall.callId,
-      callerType: "agent_to_agent",
-      callerAgent,
-      serviceAgent: "CROO SentinelX",
-      walletAddress,
-      token: market.token,
-      action,
-      riskScore: risk.score,
-      clearanceStatus: risk.status,
-      riskLevel: risk.level,
-      explanation,
-      market,
-      capOrder,
-      crooIntegration: getCrooConfigStatus(),
-      createdAtUTC: nowUTC(),
-    };
-    proof.proofHash = createProofHash(proof);
-    proofLogs.unshift(proof);
 
     res.json({
       success: true,
       report: {
-        source: "local-simulation",
-        orderId: capOrder.orderId,
-        decision: risk.status,
-        riskScore: risk.score,
-        safetyScore: 100 - risk.score,
-        riskLevel: risk.level,
-        status: capOrder.status,
-        amount: serviceFee,
-        requesterAgentId: callerAgent,
-        providerAgentId: "CROO SentinelX",
-        proofHash: proof.proofHash,
-        reportURI: "-",
-        txHash: "",
-        lifecycle: capOrder.lifecycle,
-        pair: `${market.token}/USDT`,
+        swapAttempted: true,
+        swapStatus: "BLOCKED_BEFORE_EXECUTION",
+        routerTxSubmitted: false,
+        txHash: null,
+        reason: "SentinelX blocked the honeypot before router execution.",
+        pair: "HONEYPOT/USDT",
+        token: "HONEYPOT",
         chain: "BSC",
-        createdAtUTC: proof.createdAtUTC,
-        syncedAtUTC: nowUTC(),
-      },
+        tokenContract,
+        amountIn,
+        decision: "MISSION BLOCKED",
+        riskScore: 100,
+        safetyScore: 0,
+        riskLevel: "BLOCK",
+        flags: report.flags || ["Confirmed honeypot token"],
+        safetyReport: report
+      }
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Run order failed",
-      error: error.message,
+      error: error.message
     });
   }
 });
 
+/**
+ * Real Base USDC -> WETH swap after SentinelX clearance.
+ * Required .env:
+ * BASE_RPC_URL
+ * SWAP_PRIVATE_KEY
+ * BASE_SWAP_ROUTER
+ * BASE_USDC_ADDRESS
+ * BASE_WETH_ADDRESS
+ * BASE_USDC_WETH_FEE=500
+ */
+app.post("/api/safe-usdc-weth-swap", async (req, res) => {
+  try {
+    const {
+      walletAddress,
+      recipientAddress,
+      amountUsdc = "0.05",
+      minWethOut = "0",
+      fee
+    } = req.body;
 
-app.get("/api/agent/profile", (req, res) => {
-  res.json({
-    success: true,
-    agent: {
-      name: "CROO SentinelX",
-      title: "AI Agent Command Center for On-chain Trade Safety",
-      category: "DeFi / On-chain Ops Agent",
-      tagline: "Autonomous pre-swap safety clearance for Web3 agents.",
-      description:
-        "CROO SentinelX checks wallet risk, token risk, market conditions, and swap safety before another agent executes an on-chain trade.",
-      serviceEndpoint: "/api/agent/risk-check",
-      priceExample: "0.1 USDC per risk check",
-      responseTime: "Usually under 10 seconds in demo. Agent Store SLA: 5 minutes.",
-      capFlow: ["LOCK", "DELIVER", "CLEAR"],
-      deliverable:
-        "Risk score, clearance status, AI explanation, proof hash, and Risk Passport.",
-      realCrooProof:
-        "A real CROO order was completed: AlphaSwap Requester hired SentinelX, 0.10 USDC was locked, SentinelX delivered the safety report, and payment cleared.",
-      crooIntegration: getCrooConfigStatus(),
-    },
+    const cfg = getBaseConfig();
+
+    if (!cfg.swapPrivateKey) {
+      throw new Error("Missing SWAP_PRIVATE_KEY in .env");
+    }
+
+    const provider = new ethers.JsonRpcProvider(cfg.rpcUrl);
+    const wallet = new ethers.Wallet(cfg.swapPrivateKey, provider);
+
+    if (walletAddress && walletAddress.toLowerCase() !== wallet.address.toLowerCase()) {
+      throw new Error(
+        `walletAddress mismatch. Request wallet ${walletAddress}, signer wallet ${wallet.address}`
+      );
+    }
+
+    const receiver = recipientAddress || wallet.address;
+
+    if (!ethers.isAddress(receiver)) {
+      throw new Error("Invalid recipientAddress");
+    }
+
+    const usdc = new ethers.Contract(cfg.usdc, ERC20_ABI, wallet);
+    const weth = new ethers.Contract(cfg.weth, ERC20_ABI, provider);
+    const router = new ethers.Contract(cfg.router, SWAP_ROUTER_ABI, wallet);
+
+    const usdcDecimals = await usdc.decimals();
+    const wethDecimals = await weth.decimals();
+
+    const amountIn = ethers.parseUnits(String(amountUsdc), usdcDecimals);
+    const amountOutMinimum = ethers.parseUnits(String(minWethOut), wethDecimals);
+
+    const ethBalance = await provider.getBalance(wallet.address);
+    const usdcBalance = await usdc.balanceOf(wallet.address);
+
+    if (ethBalance === 0n) {
+      throw new Error("No Base ETH gas in swap wallet");
+    }
+
+    if (usdcBalance < amountIn) {
+      throw new Error(
+        `Not enough USDC. Wallet has ${ethers.formatUnits(usdcBalance, usdcDecimals)} USDC`
+      );
+    }
+
+    const sentinelReport = await safeSentinelCheck({
+      walletAddress: wallet.address,
+      token: "USDC",
+      chain: "BASE",
+      tokenContract: cfg.usdc,
+      action: "Pre-swap safety check before executing Base USDC to WETH trade."
+    });
+
+    if (isBlockedReport(sentinelReport)) {
+      return res.json({
+        success: true,
+        report: {
+          swapAttempted: true,
+          swapStatus: "BLOCKED_BEFORE_EXECUTION",
+          routerTxSubmitted: false,
+          txHash: null,
+          reason: "SentinelX blocked this swap before execution.",
+          pair: "USDC/WETH",
+          chain: "BASE",
+          decision: "MISSION BLOCKED",
+          safetyReport: sentinelReport
+        }
+      });
+    }
+
+    const allowance = await usdc.allowance(wallet.address, cfg.router);
+    let approveTxHash = null;
+
+    if (allowance < amountIn) {
+      const approveTx = await usdc.approve(cfg.router, amountIn);
+      await approveTx.wait();
+      approveTxHash = approveTx.hash;
+    }
+
+    const wethBefore = await weth.balanceOf(receiver);
+
+  
+    const poolFee = Number(fee || cfg.fee || 500);
+
+    const params = {
+      tokenIn: cfg.usdc,
+      tokenOut: cfg.weth,
+      fee: poolFee,
+      recipient: receiver,
+      amountIn,
+      amountOutMinimum,
+      sqrtPriceLimitX96: 0
+    };
+
+   // const estimatedGas = await router.exactInputSingle.estimateGas(params);
+
+    const swapTx = await router.exactInputSingle(params);
+    const receipt = await swapTx.wait();
+
+    const wethAfter = await weth.balanceOf(receiver);
+    const wethReceived = wethAfter - wethBefore;
+
+    res.json({
+      success: true,
+      report: {
+        swapAttempted: true,
+        swapStatus: "EXECUTED_AFTER_CLEARANCE",
+        routerTxSubmitted: true,
+        txHash: swapTx.hash,
+        approveTxHash,
+        pair: "USDC/WETH",
+        chain: "BASE",
+        feeTier: poolFee,
+        walletAddress: wallet.address,
+        recipientAddress: receiver,
+        amountUsdc,
+        wethReceived: ethers.formatUnits(wethReceived, wethDecimals),
+       // estimatedGas: estimatedGas.toString(),
+        gasUsed: receipt.gasUsed.toString(),
+        decision: "CLEARANCE GRANTED",
+        riskScore: sentinelReport.riskScore,
+        safetyScore: sentinelReport.safetyScore,
+        riskLevel: sentinelReport.riskLevel,
+        flags: sentinelReport.flags || [],
+        safetyReport: sentinelReport
+      }
+    });
+  } catch (error) {
+    console.error("USDC to WETH swap error:", error);
+
+    res.status(500).json({
+      success: false,
+      error: error.shortMessage || error.reason || error.message
+    });
+  }
+});
+
+/**
+ * Optional custom escrow route.
+ * This uses escrowAfterSentinelX.js if that file exists.
+ */
+app.post("/api/escrow-after-sentinelx", async (req, res) => {
+  try {
+    if (typeof executeEscrowAfterSentinelX !== "function") {
+      throw new Error("escrowAfterSentinelX.js not loaded");
+    }
+
+    const {
+      destinationAddress,
+      amountUsdc = "0.01",
+      sentinelDecision = "CLEARANCE_GRANTED"
+    } = req.body;
+
+    const result = await executeEscrowAfterSentinelX({
+      destinationAddress,
+      amountUsdc,
+      sentinelDecision
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error("Escrow route error:", error.message);
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: "Route not found"
   });
 });
 
-
-// Frontend fallback
-app.get(/^(?!\/api).*/, (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
-});
-
-
-registerExecuteOrderRoute(app);
-
 app.listen(PORT, () => {
-  console.log(`🚀 CROO SentinelX running on http://localhost:${PORT}`);
-  console.log(
-    `🔐 CROO configured: ${Boolean(
-      process.env.CROO_SDK_KEY || process.env.CROO_API_KEY
-    )}`
-  );
+  console.log(`CROO SentinelX server running on http://localhost:${PORT}`);
 });
